@@ -1,0 +1,39 @@
+[Unit]
+Description=FRIDAY One API Server
+Documentation=file:/home/ubuntu/friday-one/docs/DEPLOY.md
+After=network-online.target docker.service
+Wants=network-online.target
+# Postgres runs in docker container friday-pg; wait for it.
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/friday-one
+ExecStart=/home/ubuntu/friday-one/scripts/run-server.sh
+Restart=on-failure
+RestartSec=3
+
+# --- Hardening (matches friday-console.service pattern) ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# The server reads server/.env and writes nothing outside its own tree at runtime.
+# ReadWritePaths grants write access only where needed (e.g. upload temp files
+# if WS4 adds them under the project root).
+ReadWritePaths=/home/ubuntu/friday-one
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# Restrict network to loopback only — the tunnel service handles external exposure.
+# AF_INET/AF_INET6 restricted via socket filtering would be ideal but requires
+# a custom seccomp profile; binding to 127.0.0.1 in index.ts is the enforcement.
+
+[Install]
+WantedBy=multi-user.target
+
+</content>

@@ -1,0 +1,29 @@
+# ---- secrets & local config ----
+server/.env
+infra/.env
+infra/endpoint.json
+android/local.properties
+android/key.properties
+
+# ---- build output ----
+server/dist/
+android/app/build/
+android/build/
+android/.gradle/
+android/.cxx/
+node_modules/
+
+# ---- runtime state & logs ----
+storage/
+logs/
+*.log
+*.pid
+
+# ---- OS / editor cruft ----
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ---- audit harnesses (keep the reports, not the throwaway probes) ----
+audit/audit-*.mjs

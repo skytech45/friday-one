@@ -1,0 +1,14 @@
+[Unit]
+Description=Periodically refresh the FRIDAY One endpoint discovery gist
+
+[Timer]
+# Runs unattended every 5 minutes. This is the self-healing path: if cloudflared
+# restarts and gets a new random hostname, the gist is corrected within 5
+# minutes and every installed app picks the new host up on its next launch -
+# without a rebuild or a reinstall. The script no-ops when nothing changed.
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=friday-endpoint-publisher.service
+
+[Install]
+WantedBy=timers.target

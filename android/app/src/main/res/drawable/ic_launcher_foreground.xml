@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon: a cyan ring with a needle, matching the console palette.
+     Colours are literal because aapt2 rejects fillColor="none". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#22D3EE"
+        android:pathData="M54,22 A32,32 0 1,1 54,86 A32,32 0 1,1 54,22 Z" />
+    <path
+        android:fillColor="#08090B"
+        android:pathData="M54,33 A21,21 0 1,1 54,75 A21,21 0 1,1 54,33 Z" />
+    <path
+        android:fillColor="#22D3EE"
+        android:pathData="M54,50 L72,50 A4,4 0 0 1 72,58 L54,58 A4,4 0 0 1 54,50 Z" />
+</vector>

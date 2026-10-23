@@ -1,0 +1,11 @@
+[Unit]
+Description=Publish the FRIDAY One tunnel URL to the discovery gist
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+# Repoints the app at whatever hostname cloudflared most recently handed out.
+# Harmless when nothing changed - the script exits early without calling gh.
+ExecStart=/home/ubuntu/friday-one/scripts/publish-endpoint.sh

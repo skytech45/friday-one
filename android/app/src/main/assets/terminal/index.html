@@ -1,0 +1,245 @@
+<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<link rel="stylesheet" href="xterm.css">
+<style>
+  html,body{margin:0;padding:0;background:#0d1117;height:100%;width:100%;overflow:hidden;
+            position:fixed;overscroll-behavior:none;-webkit-text-size-adjust:100%}
+  /* xterm sizes its canvas from this element's box, so it must fill the viewport
+     exactly: any padding here is added on top and pushes the last column off
+     screen. Padding lives on .xterm instead. */
+  #terminal-container{position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%}
+  .xterm{padding:2px 0 0 2px}
+  .xterm-viewport{scrollbar-width:none}
+  .xterm-viewport::-webkit-scrollbar{display:none}
+</style>
+</head><body>
+<div id="terminal-container"></div>
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
+<script>
+/**
+ * WebSocket URL is passed from Kotlin via window.__WS_URL__ before this page
+ * loads (injected through evaluateJavascript in onPageFinished).
+ * Alternatively, append ?ws=... as a query param. We support both.
+ */
+(function(){
+  const container = document.getElementById('terminal-container');
+
+  const term = new Terminal({
+    allowProposedApi: true,
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily: 'ui-monospace, Menlo, monospace',
+    theme: {
+      background: '#0d1117',
+      foreground: '#e6edf3',
+      cursor: '#58a6ff',
+      selectionBackground: '#264f78',
+      black: '#0d1117',
+      red: '#ff7b72',
+      green: '#3fb950',
+      yellow: '#d29922',
+      blue: '#58a6ff',
+      magenta: '#bc8cff',
+      cyan: '#39c5cf',
+      white: '#e6edf3',
+      brightBlack: '#484f58',
+      brightRed: '#ffa198',
+      brightGreen: '#56d364',
+      brightYellow: '#e3b341',
+      brightBlue: '#79c0ff',
+      brightMagenta: '#d2a8ff',
+      brightCyan: '#56d4dd',
+      brightWhite: '#ffffff'
+    }
+  });
+
+  // Real FitAddon, vendored locally as addon-fit.js.
+  //
+  // The previous inline implementation measured the cell size by reaching into
+  // xterm's private internals (term._core._renderService.dimensions). Two bugs
+  // came from that: it returned early whenever those internals were absent or
+  // not yet rendered - so no fit ever happened and the terminal sat at its
+  // 80x24 default, far wider than a phone - and it clamped cols to a minimum of
+  // 40, which on a portrait handset is itself wider than the screen. FitAddon
+  // measures the container against the rendered cell box instead, which is the
+  // supported way to do this.
+  const fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+
+  function fitTerminal() {
+    try {
+      fitAddon.fit();
+    } catch (e) {
+      // fit() throws when the container has no size yet (not laid out, or the
+      // WebView is hidden behind another tab). Not an error worth surfacing -
+      // the ResizeObserver below calls us again as soon as it has dimensions.
+    }
+  }
+
+  term.open(container);
+
+  // Fit BEFORE the first connect(): getWsUrl() reports term.cols/rows to the
+  // server, so connecting with the default 80x24 would ask the server for the
+  // wrong PTY size and the TUI would be laid out for a screen the phone is not.
+  fitTerminal();
+
+  // Re-fit on any real layout change. window.resize alone is not enough: it does
+  // not fire when the soft keyboard opens, when the tab is revealed from hidden,
+  // or (on some WebViews) on rotation.
+  if (window.ResizeObserver) {
+    new ResizeObserver(function() { fitTerminal(); }).observe(container);
+  }
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) setTimeout(fitTerminal, 100);
+  });
+  // Cell metrics depend on the font, so fitting before it loads gives a wrong
+  // column count.
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function() { fitTerminal(); });
+  }
+
+  setTimeout(fitTerminal, 50);
+  window.addEventListener('resize', () => setTimeout(fitTerminal, 50));
+  window.addEventListener('orientationchange', () => setTimeout(fitTerminal, 200));
+
+  let ws = null;
+  let reconnectTimer = null;
+  let backoffMs = 500;
+  const maxBackoff = 15000;
+
+  function getWsUrl() {
+    // Primary: injected by Kotlin side
+    let url = window.__WS_URL__ || '';
+    if (!url) {
+      // Fallback: query param
+      const params = new URLSearchParams(window.location.search);
+      url = params.get('ws') || '';
+    }
+    if (!url) return '';
+    // Tell the server the REAL terminal size so it creates the PTY at the right
+    // dimensions. Without this the remote defaults to 100x30 (terminal.ts) and an
+    // Ink-based TUI wraps its output for a width the phone does not have - which
+    // is what pushes text off the screen. term.cols/rows are only correct after
+    // fitTerminal() has run, which is why that happens before connect().
+    const sep = url.indexOf('?') === -1 ? '?' : '&';
+    return url + sep + 'cols=' + term.cols + '&rows=' + term.rows;
+  }
+
+  function showStatus(msg, color) {
+    term.writeln('\x1b[0m\x1b[' + color + 'm\r\n  ' + msg + '\r\n\x1b[0m');
+  }
+
+  function connect() {
+    const url = getWsUrl();
+    if (!url) {
+      showStatus('No WebSocket URL configured', '31');
+      return;
+    }
+
+    ws = new WebSocket(url);
+
+    ws.onopen = function() {
+      backoffMs = 500;
+      showStatus('Connected', '32');
+      fitTerminal();
+    };
+
+    ws.onmessage = function(ev) {
+      if (typeof ev.data === 'string') {
+        term.write(ev.data);
+      }
+    };
+
+    ws.onclose = function(ev) {
+      showStatus('Disconnected (code ' + ev.code + '). Reconnecting...', '33');
+      scheduleReconnect();
+    };
+
+    ws.onerror = function() {
+      // onclose will fire after this
+    };
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(function() {
+      reconnectTimer = null;
+      connect();
+    }, backoffMs);
+    backoffMs = Math.min(backoffMs * 2, maxBackoff);
+  }
+
+  // Pipe terminal input -> WebSocket
+  term.onData(function(data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(data);
+    }
+  });
+
+  // Pipe resize events -> control frame
+  let connectedCols = 0, connectedRows = 0;
+  term.onResize(function(size) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send('\u0000resize:' + size.cols + 'x' + size.rows);
+    // The server cannot resize a RUNNING pty without a native module (node-pty
+    // will not build on this host), so a significant change - rotation, or the
+    // soft keyboard opening - cannot be applied to the live process. Reconnect
+    // instead: that re-spawns the pty at the new size. It costs the session, but
+    // the alternative is a TUI drawing for dimensions the screen does not have.
+    if (connectedCols && (Math.abs(size.cols - connectedCols) > 2 ||
+                          Math.abs(size.rows - connectedRows) > 2)) {
+      connectedCols = size.cols; connectedRows = size.rows;
+      if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; }
+      connect();
+    }
+  });
+
+  // Expose send function for Kotlin keyboard bar
+  window.termSend = function(data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(data);
+    }
+  };
+
+  // Expose fit for Kotlin to call after layout changes
+  window.termFit = fitTerminal;
+
+  /**
+   * Start the socket only once the layout is known.
+   *
+   * This ordering is the whole point. connect() reports term.cols/rows to the
+   * server as the pty size, and FitAddon cannot measure a container that has not
+   * been laid out yet - which is the normal state when this page loads inside a
+   * WebView. Connecting first meant the pty was created at xterm's 80x24 default
+   * while the phone showed ~45 columns, so Ink-based TUIs drew a two-column
+   * layout for a wider terminal and the right-hand column wrapped over the left
+   * ("Available (9 in 16 ca" / "Skills 2) tegories" - "categories" split across
+   * two visual rows). Waiting for a real size avoids the bad first connection
+   * entirely rather than trying to correct it afterwards, which the server
+   * cannot do for a running pty.
+   */
+  let started = false;
+  function startWhenSized() {
+    if (started) return;
+    fitTerminal();
+    if (container.clientWidth > 0 && container.clientHeight > 0) {
+      started = true;
+      connectedCols = term.cols;
+      connectedRows = term.rows;
+      connect();
+    } else {
+      // Not laid out yet - try again next frame until the WebView gives us a box.
+      requestAnimationFrame(startWhenSized);
+    }
+  }
+
+  if (window.ResizeObserver) {
+    new ResizeObserver(function() { startWhenSized(); }).observe(container);
+  }
+  startWhenSized();
+})();
+</script>
+</body></html>

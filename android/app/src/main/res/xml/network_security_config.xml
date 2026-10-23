@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext is permitted ONLY for a console running on this device's
+     loopback (Termux). Everything else - including the Cloudflare tunnel -
+     must be HTTPS. base-config denies cleartext, so a future code path cannot
+     accidentally talk plaintext to a remote host. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

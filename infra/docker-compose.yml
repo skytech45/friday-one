@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: friday-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: friday
+      POSTGRES_USER: friday
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
+    # Bound to loopback only: the backend talks to it over the docker network,
+    # and nothing outside this host should ever reach the database port.
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - friday-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U friday -d friday"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  friday-pgdata:
