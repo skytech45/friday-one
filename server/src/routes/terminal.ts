@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { assertTokenClaims, assertNoCritHeader } from "../tokenClaims.js";
 import { query } from "../db.js";
 
 /**
@@ -34,6 +35,10 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
         // in the query string. It is short-lived (15m) and checked before any
         // process is spawned.
         const payload = app.jwt.verify<{ sub: string; did?: string }>(q.token ?? "");
+        assertTokenClaims(payload);
+        // fast-jwt 5.x ignores `crit`, so the header is checked explicitly.
+        const decoded = app.jwt.decode<{ header?: unknown }>(q.token ?? "");
+        assertNoCritHeader(decoded?.header);
         sub = payload.sub;
         did = payload.did ?? null;
       } catch {

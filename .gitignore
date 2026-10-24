@@ -12,6 +12,7 @@ android/build/
 android/.gradle/
 android/.cxx/
 node_modules/
+audit/node_modules
 
 # ---- runtime state & logs ----
 storage/

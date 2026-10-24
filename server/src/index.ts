@@ -12,6 +12,7 @@ import { systemRoutes } from "./routes/system.js";
 import { fileRoutes } from "./routes/files.js";
 import { crashRoutes } from "./routes/crash.js";
 import { terminalRoutes } from "./routes/terminal.js";
+import { assertTokenClaims, assertNoCritHeader } from "./tokenClaims.js";
 import { pool, query } from "./db.js";
 
 declare module "@fastify/jwt" {
@@ -65,6 +66,13 @@ await app.register(jwt, {
   secret: process.env.JWT_SECRET ?? (() => {
     throw new Error("JWT_SECRET is not set");
   })(),
+  // Accept ONLY HS256. Without this fast-jwt accepts HS384/HS512 and, via the
+  // upstream advisories, non-conforming shapes (F-06, F-11).
+  verify: { algorithms: ["HS256"] },
+  // `complete: true` makes the decoder return the JOSE header as well as the
+  // payload. The header is needed to reject a `crit` extension, which
+  // fast-jwt 5.x does not handle at all (F-11).
+  decode: { complete: true },
 });
 
 await app.register(multipart, {
@@ -75,15 +83,22 @@ await app.register(websocket);
 
 app.decorate("authenticate", async (req, reply) => {
   try {
-    await req.jwtVerify();
-  } catch {
+    const payload = await req.jwtVerify();
+    assertTokenClaims(payload);
+    const decoded = await req.jwtDecode<{ header?: unknown }>();
+    assertNoCritHeader(decoded?.header);
+  } catch (e) {
+    if (process.env.DEBUG_JWT) req.log.warn({ why: (e as Error).message }, "authenticate rejected");
     return reply.code(401).send({ error: "unauthorized" });
   }
 });
 
 app.decorate("authenticateTrusted", async (req, reply) => {
   try {
-    await req.jwtVerify();
+    const payload = await req.jwtVerify();
+    assertTokenClaims(payload);
+    const decoded = await req.jwtDecode<{ header?: unknown }>();
+    assertNoCritHeader(decoded?.header);
   } catch {
     return reply.code(401).send({ error: "unauthorized" });
   }
@@ -95,6 +110,28 @@ app.decorate("authenticateTrusted", async (req, reply) => {
   if (!d || !d.trusted || d.revoked) {
     return reply.code(403).send({ error: "device_not_trusted" });
   }
+});
+
+// Never let an internal error reach the client. Fastify's default handler
+// returns err.message verbatim, which for a Postgres failure is the raw
+// driver message — e.g. {"code":"42P01","message":"relation \"users\" does
+// not exist"}. That leaks schema details and is a 500 where a 400 belongs.
+// The full error still goes to the server log; the client gets a flat body.
+app.setErrorHandler((err: unknown, req, reply) => {
+  const e = err as { statusCode?: number; name?: string; message?: string };
+  const status = e.statusCode && e.statusCode >= 400 && e.statusCode < 600
+    ? e.statusCode
+    : 500;
+  if (status >= 500) {
+    req.log.error({ err: e, path: req.url }, "unhandled error");
+  } else {
+    req.log.info({ err: e.message, path: req.url }, "request rejected");
+  }
+  return reply.code(status).send({
+    statusCode: status,
+    error: status >= 500 ? "internal_error" : (e.name || "error"),
+    message: status >= 500 ? "Internal Server Error" : e.message,
+  });
 });
 
 app.get("/health", async () => {
