@@ -26,5 +26,19 @@ logs/
 .idea/
 .vscode/
 
-# ---- audit harnesses (keep the reports, not the throwaway probes) ----
-audit/audit-*.mjs
+# ---- audit harnesses ----
+# The regression harnesses (audit-e2e.mjs, audit-r02.mjs, audit-r07.mjs) ARE
+# tracked: they are the tests for the P0/P1 security fixes. Only the one-off
+# diagnostic probes are ignored.
+audit/audit-diag*.mjs
+audit/audit-p3*.mjs
+audit/audit-pgcheck.mjs
+audit/audit-jwtcmp.mjs
+audit/audit-rl-diag.mjs
+audit/audit-race.mjs
+audit/audit-terminal.mjs
+audit/audit-final.mjs
+audit/audit-verify.mjs
+audit/audit-nnp.mjs
+audit/audit-emptysecret.mjs
+audit/audit-probes.mjs

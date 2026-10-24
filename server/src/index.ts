@@ -13,6 +13,8 @@ import { fileRoutes } from "./routes/files.js";
 import { crashRoutes } from "./routes/crash.js";
 import { terminalRoutes } from "./routes/terminal.js";
 import { assertTokenClaims, assertNoCritHeader } from "./tokenClaims.js";
+import { clientIp } from "./clientIp.js";
+import { isRevoked, sweepRevocations } from "./revocation.js";
 import { pool, query } from "./db.js";
 
 declare module "@fastify/jwt" {
@@ -48,7 +50,7 @@ const app = Fastify({
       },
     },
   },
-  trustProxy: true,
+  trustProxy: "127.0.0.1",
   bodyLimit: 1024 * 1024,
 });
 
@@ -60,6 +62,10 @@ await app.register(cors, {
 await app.register(rateLimit, {
   max: Number(process.env.RATE_LIMIT_MAX ?? 120),
   timeWindow: "1 minute",
+  // Bucket on the trusted client IP, not on Fastify's default `req.ip`.
+  // With trustProxy narrowed to loopback, req.ip is the local peer, so the
+  // explicit resolver is what distinguishes one caller from another (F-05).
+  keyGenerator: (req) => clientIp(req),
 });
 
 await app.register(jwt, {
@@ -87,6 +93,10 @@ app.decorate("authenticate", async (req, reply) => {
     assertTokenClaims(payload);
     const decoded = await req.jwtDecode<{ header?: unknown }>();
     assertNoCritHeader(decoded?.header);
+    // A revoked device's access token must stop working immediately (F-07).
+    if (isRevoked(req.user.did)) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
   } catch (e) {
     if (process.env.DEBUG_JWT) req.log.warn({ why: (e as Error).message }, "authenticate rejected");
     return reply.code(401).send({ error: "unauthorized" });
@@ -99,6 +109,9 @@ app.decorate("authenticateTrusted", async (req, reply) => {
     assertTokenClaims(payload);
     const decoded = await req.jwtDecode<{ header?: unknown }>();
     assertNoCritHeader(decoded?.header);
+    if (isRevoked(req.user.did)) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
   } catch {
     return reply.code(401).send({ error: "unauthorized" });
   }
@@ -135,6 +148,7 @@ app.setErrorHandler((err: unknown, req, reply) => {
 });
 
 app.get("/health", async () => {
+  sweepRevocations();
   const db = await pool.query("SELECT 1 AS ok");
   return {
     ok: db.rowCount === 1,

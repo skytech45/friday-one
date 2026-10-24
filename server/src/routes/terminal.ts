@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { assertTokenClaims, assertNoCritHeader } from "../tokenClaims.js";
+import { isRevoked } from "../revocation.js";
 import { query } from "../db.js";
 
 /**
@@ -55,6 +56,12 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
 
       if (!device || !device.trusted || device.revoked) {
         socket.close(4403, "device_not_trusted");
+        return;
+      }
+
+      // A revoked device's access token must not open a terminal (F-07).
+      if (isRevoked(did)) {
+        socket.close(4401, "unauthorized");
         return;
       }
 

@@ -16,6 +16,8 @@ import {
   recordSuccess,
   sendThrottled,
 } from "../loginGuard.js";
+import { clientIp } from "../clientIp.js";
+import { revokeKey } from "../revocation.js";
 
 const REFRESH_TTL_DAYS = 30;
 
@@ -70,10 +72,6 @@ interface DeviceRow {
   id: string;
   trusted: boolean;
   revoked: boolean;
-}
-
-function clientIp(req: FastifyRequest): string {
-  return req.ip ?? "unknown";
 }
 
 /**
@@ -332,6 +330,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       "UPDATE sessions SET revoked = true WHERE user_id = $1 AND (device_id = $2 OR $2 IS NULL)",
       [sub, did ?? null],
     );
+    // The access token must die with the session, not linger for 15 minutes (F-07).
+    if (did) revokeKey(did);
     await audit(sub, did ?? null, "auth.logout", clientIp(req));
     return reply.send({ ok: true });
   });
@@ -399,6 +399,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       );
       if (!r.rowCount) return reply.code(404).send({ error: "not_found" });
       await query("UPDATE sessions SET revoked = true WHERE device_id = $1", [id]);
+      // The device's live access token stops working immediately (F-07).
+      revokeKey(id);
       await audit(req.user.sub, req.user.did ?? null, "device.revoke", clientIp(req), { id });
       return reply.send({ ok: true });
     },
