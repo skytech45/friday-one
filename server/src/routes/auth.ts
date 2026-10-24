@@ -18,6 +18,7 @@ import {
 } from "../loginGuard.js";
 import { clientIp } from "../clientIp.js";
 import { revokeKey } from "../revocation.js";
+import { config } from "../config.js";
 
 const REFRESH_TTL_DAYS = 30;
 
@@ -29,7 +30,7 @@ const REFRESH_TTL_DAYS = 30;
  * permission grant: registration fails closed (see the handler).
  */
 function allowedEmails(): string[] {
-  return (process.env.ALLOWED_EMAILS ?? "")
+  return config.allowedEmails
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);

@@ -17,6 +17,10 @@ const ROOT = await mkdtemp(join("/tmp", "friday-deny-"));
 process.env.FS_ROOTS = realpathSync(ROOT);
 process.env.STORAGE_DIR = join(realpathSync(ROOT), "storage");
 process.env.DATABASE_URL = "postgres://nodb:nodb@127.0.0.1:5432/nodb";
+// config.ts requires these to be present, and then scrubs them from
+// process.env. The test only exercises safePath, so dummy values are fine.
+process.env.JWT_SECRET = "test-only-jwt-secret";
+process.env.FINGERPRINT_PEPPER = "test-only-pepper";
 
 const { safePath } = await import("../src/routes/files.js");
 

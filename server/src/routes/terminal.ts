@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { assertTokenClaims, assertNoCritHeader } from "../tokenClaims.js";
 import { isRevoked } from "../revocation.js";
+import { childEnv, config } from "../config.js";
 import { query } from "../db.js";
 
 /**
@@ -9,10 +10,10 @@ import { query } from "../db.js";
  * WebSocket hands a live terminal to a phone, and a free-form command parameter
  * would be remote code execution by design.
  */
-const COMMANDS: Record<string, { cmd: string; cwd: string; label: string }> = {
-  hermes: { cmd: "hermes --tui", cwd: "/home/ubuntu", label: "Hermes TUI" },
-  opencode: { cmd: "opencode", cwd: "/home/ubuntu", label: "OpenCode" },
-  shell: { cmd: "bash -l", cwd: "/home/ubuntu", label: "Shell" },
+const COMMANDS: Record<string, { cmd: string; label: string }> = {
+  hermes: { cmd: "hermes --tui", label: "Hermes TUI" },
+  opencode: { cmd: "opencode", label: "OpenCode" },
+  shell: { cmd: "bash -l", label: "Shell" },
 };
 
 interface TerminalQuery {
@@ -93,19 +94,24 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
       // size. `exec` replaces the wrapper shell so Ctrl-C still reaches the real
       // process rather than a shell that is merely its parent.
       const sized = `stty rows ${rows} cols ${cols} 2>/dev/null; exec ${spec.cmd}`;
+      // The working directory doubles as the child's HOME, so the terminal
+      // does not run in the owner's home where .hermes and .ssh live.
+      const cwd = config.terminalCwd;
       const child: ChildProcessWithoutNullStreams = spawn(
         "script",
         ["-qfc", sized, "/dev/null"],
         {
-          cwd: spec.cwd,
-          env: {
-            ...process.env,
-            TERM: "xterm-256color",
-            COLUMNS: String(cols),
-            LINES: String(rows),
-            COLORTERM: "truecolor",
-            FORCE_COLOR: "1",
-          },
+          cwd,
+          // An explicit allowlist, NOT `...process.env`. The server's
+          // environment used to carry JWT_SECRET, DATABASE_URL and
+          // FINGERPRINT_PEPPER into the shell, where a prompt injection into
+          // Hermes or OpenCode could read them with one command (F-10).
+          env: childEnv({
+            home: cwd,
+            term: "xterm-256color",
+            cols,
+            rows,
+          }),
         },
       );
 

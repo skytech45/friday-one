@@ -6,6 +6,7 @@ import {
   createHmac,
 } from "node:crypto";
 import { promisify } from "node:util";
+import { config } from "./config.js";
 
 const scrypt = promisify(scryptCb) as (
   password: string | Buffer,
@@ -62,7 +63,7 @@ export function sha256(value: string | Buffer): string {
  * the raw hardware identifiers never sit in the database.
  */
 export function hashFingerprint(raw: string): string {
-  const pepper = process.env.FINGERPRINT_PEPPER;
+  const pepper = config.fingerprintPepper;
   if (!pepper) throw new Error("FINGERPRINT_PEPPER is not set");
   return createHmac("sha256", pepper).update(raw).digest("hex");
 }

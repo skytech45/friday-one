@@ -7,14 +7,15 @@ import { pipeline } from "node:stream/promises";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { opendir } from "node:fs/promises";
+import { config } from "../config.js";
 import { query } from "../db.js";
 
-const ROOTS = (process.env.FS_ROOTS ?? "/home/ubuntu")
+const ROOTS = config.fsRoots
   .split(",")
   .map((s) => resolve(s.trim()))
   .filter(Boolean);
 
-const STORAGE = resolve(process.env.STORAGE_DIR ?? "/home/ubuntu/friday-one/storage");
+const STORAGE = resolve(config.storageDir);
 
 // Sensitive paths that must never be served even when they sit inside a root.
 // safePath() proves containment; this proves the file is not a credential.
@@ -119,7 +120,7 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
       }
       const s = await stat(real).catch(() => null);
       if (!s || !s.isFile()) return reply.code(404).send({ error: "not_found" });
-      if (s.size > Number(process.env.MAX_DOWNLOAD_BYTES ?? 500 * 1024 * 1024)) {
+      if (s.size > config.maxDownloadBytes) {
         return reply.code(413).send({ error: "too_large" });
       }
 
@@ -188,7 +189,7 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
       // Stream to a temp file in the same directory so rename is atomic (same fs).
       const tmpName = `.upload-${randomBytes(8).toString("hex")}.tmp`;
       const tmpPath = join(dir, tmpName);
-      const maxBytes = Number(process.env.MAX_UPLOAD_BYTES ?? 200 * 1024 * 1024);
+      const maxBytes = config.maxUploadBytes;
 
       const hash = createHash("sha256");
       let size = 0;

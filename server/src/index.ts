@@ -7,6 +7,7 @@ import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import rateLimit from "@fastify/rate-limit";
 
+import { config } from "./config.js";
 import { authRoutes } from "./routes/auth.js";
 import { systemRoutes } from "./routes/system.js";
 import { fileRoutes } from "./routes/files.js";
@@ -33,13 +34,13 @@ declare module "fastify" {
   }
 }
 
-const PORT = Number(process.env.PORT ?? 8787);
+const PORT = config.port;
 // Loopback by default: the tunnel is what exposes this, not a public bind.
-const HOST = process.env.HOST ?? "127.0.0.1";
+const HOST = config.host;
 
 const app = Fastify({
   logger: {
-    level: process.env.LOG_LEVEL ?? "info",
+    level: config.logLevel,
     // Redact the bearer token that the WebSocket terminal passes as a query
     // parameter (?token=…). Without this the live access token is written to
     // the journal on every terminal connection (F-03).
@@ -55,12 +56,12 @@ const app = Fastify({
 });
 
 await app.register(cors, {
-  origin: (process.env.CORS_ORIGINS ?? "").split(",").filter(Boolean),
+  origin: config.corsOrigins.split(",").filter(Boolean),
   credentials: false,
 });
 
 await app.register(rateLimit, {
-  max: Number(process.env.RATE_LIMIT_MAX ?? 120),
+  max: config.rateLimitMax,
   timeWindow: "1 minute",
   // Bucket on the trusted client IP, not on Fastify's default `req.ip`.
   // With trustProxy narrowed to loopback, req.ip is the local peer, so the
@@ -69,9 +70,7 @@ await app.register(rateLimit, {
 });
 
 await app.register(jwt, {
-  secret: process.env.JWT_SECRET ?? (() => {
-    throw new Error("JWT_SECRET is not set");
-  })(),
+  secret: config.jwtSecret,
   // Accept ONLY HS256. Without this fast-jwt accepts HS384/HS512 and, via the
   // upstream advisories, non-conforming shapes (F-06, F-11).
   verify: { algorithms: ["HS256"] },
@@ -82,7 +81,7 @@ await app.register(jwt, {
 });
 
 await app.register(multipart, {
-  limits: { fileSize: Number(process.env.MAX_UPLOAD_BYTES ?? 200 * 1024 * 1024) },
+  limits: { fileSize: config.maxUploadBytes },
 });
 
 await app.register(websocket);
@@ -153,7 +152,7 @@ app.get("/health", async () => {
   return {
     ok: db.rowCount === 1,
     app: "friday-one",
-    version: process.env.APP_VERSION ?? "0.1.0",
+    version: config.appVersion,
     uptime_s: Math.round(process.uptime()),
   };
 });

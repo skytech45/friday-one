@@ -1,4 +1,5 @@
 import type { FastifyReply } from "fastify";
+import { config } from "./config.js";
 import { query } from "./db.js";
 
 /**
@@ -22,13 +23,13 @@ import { query } from "./db.js";
  * exists, is locked, or merely had a bad password.
  */
 
-const MAX_FAILED_BEFORE_LOCK = Number(process.env.LOGIN_MAX_FAILURES ?? 5);
+const MAX_FAILED_BEFORE_LOCK = config.loginMaxFailures;
 
 /** Lockout grows with repeated lockouts: 1m, 5m, 15m, 60m, then 24h. */
 const LOCK_STEPS_MINUTES = [1, 5, 15, 60, 60 * 24];
 
 /** Per-IP sliding window. */
-const IP_MAX_ATTEMPTS = Number(process.env.LOGIN_IP_MAX ?? 10);
+const IP_MAX_ATTEMPTS = config.loginIpMax;
 const IP_WINDOW_MS = 15 * 60 * 1000;
 
 type IpRecord = { count: number; firstAt: number };

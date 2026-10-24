@@ -1,4 +1,5 @@
 import "./env.js";
+import { ownerCredentials } from "./config.js";
 import { query, closePool } from "./db.js";
 import { hashPassword } from "./security.js";
 
@@ -18,8 +19,8 @@ import { hashPassword } from "./security.js";
  * credential is ever lost or exposed - and it also clears any lockout.
  */
 
-const EMAIL = (process.env.FRIDAY_OWNER_EMAIL ?? "").trim().toLowerCase();
-const PASSWORD = process.env.FRIDAY_OWNER_PASSWORD ?? "";
+const EMAIL = ownerCredentials.email;
+const PASSWORD = ownerCredentials.password;
 
 async function main(): Promise<void> {
   if (!EMAIL) throw new Error("FRIDAY_OWNER_EMAIL is required");
