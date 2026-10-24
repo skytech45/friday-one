@@ -9,6 +9,41 @@
 
 ---
 
+## Remediation status (updated 2026-10-24)
+
+The severity figures above describe the state **at audit time**. Since then, the
+P0 and most of the P1 batch has been implemented, committed and re-verified.
+`findings.json` carries the machine-readable status of every finding.
+
+**Closed — 10 findings:** F-02, F-03, F-04, F-05, F-06, F-07, F-08, F-10, F-18, F-19
+**Partially closed — 1:** F-11 (the exploitable behaviours are fixed; the `fast-jwt` upgrade is still open)
+**Open — 15:** F-01, F-09, F-12, F-13, F-14, F-15, F-16, F-17, F-20, F-21, F-22, F-23, F-24, F-25, F-26
+
+| Commit | Scope |
+|---|---|
+| `789777d` | P0: FS_ROOTS narrowed + credential denylist, fail-closed registration, token log redaction, `ws` pinned |
+| `3669d64` | P1: JWT algorithm pinning + claim validation, DB error-disclosure fix |
+| `0a497fc` | P1: client-IP spoofing fix, immediate revocation, harness process-group fix |
+| `87d5e37` | P1: secrets out of the process environment, terminal child env allowlist |
+
+**Verification at each commit:** `tsc --noEmit` clean · 20/20 unit tests ·
+59/59 end-to-end checks · 5/5 R-02 · 5/5 R-07 · 7/7 R-09.
+
+The individual finding sections below keep their **original** status so the
+audit record stays a faithful snapshot of what was found. Read this section for
+what is still outstanding.
+
+**What remains open, in priority order:**
+
+1. **F-14** — the release APK is still debug-signed. Do this before distributing any build.
+2. **F-01** — the Android security layer is still dead code (no biometric gate, no pinning, no device binding). Blocked on F-22 (a stable hostname) for the pins to be meaningful.
+3. **F-09** — the database role is still a superuser.
+4. **F-22** — the tunnel is down and discovery is still unauthenticated.
+5. **F-12, F-13** — crash-report read scope and the untrusted-device telemetry gap.
+6. **F-20, F-15** — no CI, and no Android tests.
+
+---
+
 ## F-01 · The Android client's entire security layer is dead code
 
 | | |

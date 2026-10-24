@@ -5,18 +5,54 @@
     "date": "2026-10-23",
     "auditor": "Friday (Hermes Agent)",
     "method": "Read-only source review plus isolated empirical validation against a dedicated non-production PostgreSQL role and throwaway filesystem roots. No production secret used as a test input; no production file modified.",
-    "severity_scale": ["critical", "high", "medium", "low", "informational"],
-    "confidence_scale": ["confirmed", "likely", "unverified"],
-    "status": "proposed-remediation-awaiting-approval",
-    "production_changes_applied": false
+    "severity_scale": [
+      "critical",
+      "high",
+      "medium",
+      "low",
+      "informational"
+    ],
+    "confidence_scale": [
+      "confirmed",
+      "likely",
+      "unverified"
+    ],
+    "status": "remediation-in-progress",
+    "production_changes_applied": true
   },
   "summary": {
     "total_findings": 26,
-    "by_severity": { "critical": 2, "high": 3, "medium": 10, "low": 7, "informational": 4 },
-    "by_confidence": { "confirmed": 24, "likely": 1, "unverified": 1 },
-    "tests": { "pass": 51, "fail": 29, "not_run": 1, "gap": 8, "total": 89 },
-    "verdict": "not-production-ready",
-    "top_blockers": ["F-02", "F-01", "F-03", "F-04"]
+    "by_severity": {
+      "critical": 2,
+      "high": 3,
+      "medium": 10,
+      "low": 7,
+      "informational": 4
+    },
+    "by_confidence": {
+      "confirmed": 24,
+      "likely": 1,
+      "unverified": 1
+    },
+    "tests": {
+      "pass": 51,
+      "fail": 29,
+      "not_run": 1,
+      "gap": 8,
+      "total": 89
+    },
+    "verdict": "remediation in progress: all P0 and most P1 items closed",
+    "top_blockers": [
+      "F-01",
+      "F-09",
+      "F-14",
+      "F-12"
+    ],
+    "by_status": {
+      "open": 15,
+      "fixed": 10,
+      "partially-fixed": 1
+    }
   },
   "findings": [
     {
@@ -27,7 +63,9 @@
       "status": "open",
       "cwe": "CWE-693",
       "cvss41": 8.1,
-      "components": ["android"],
+      "components": [
+        "android"
+      ],
       "locations": [
         "android/app/src/main/java/com/friday/one/MainActivity.kt",
         "android/app/src/main/java/com/friday/one/security/AppLock.kt",
@@ -39,121 +77,204 @@
       "description": "AppLock (biometric gate), CertificatePinning, DeviceIdentity (Keystore keypair), DeviceIntegrityGate and NetworkModule are all implemented but never called from MainActivity or any other live code path. The app authenticates with ApiClient.create directly, so there is no biometric prompt, no certificate pinning, no device key registration, and no token refresh authenticator on the OkHttp client. The server-side device-binding columns (public_key, key_bound_at, key_security_level, integrity_verdict) are never read or written by the server.",
       "impact": "A stolen or borrowed phone opens the app straight into the control plane with no biometric challenge; TLS interception is not detected; the device binding the server implements has no client; a 401 does not trigger a refresh.",
       "evidence": "Exhaustive call-site search across all Kotlin sources: zero call sites for AppLock, CertificatePinning, DeviceIdentity, DeviceIntegrityGate, DeviceLockManager, or NetworkModule. Api.kt builds its own OkHttpClient with no authenticator; ApiClient.create is called directly from MainActivity.",
-      "remediation_refs": ["R-04"],
-      "regression_test": "Instrumented tests: biometric prompt required before dashboard; non-loopback host with untrusted cert fails handshake; no ApiClient.create call remains in MainActivity."
+      "remediation_refs": [
+        "R-04"
+      ],
+      "regression_test": "Instrumented tests: biometric prompt required before dashboard; non-loopback host with untrusted cert fails handshake; no ApiClient.create call remains in MainActivity.",
+      "remediation_note": "Not started. Needs the named tunnel (R-12) before the pins can be meaningful."
     },
     {
       "id": "F-02",
       "title": "FS_ROOTS=/home/ubuntu exposes the whole home directory over HTTP",
       "severity": "critical",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-552",
       "cvss41": 9.1,
-      "components": ["server", "infra"],
-      "locations": ["server/.env", "server/src/routes/files.ts"],
+      "components": [
+        "server",
+        "infra"
+      ],
+      "locations": [
+        "server/.env",
+        "server/src/routes/files.ts"
+      ],
       "description": "The filesystem jail in safePath() is correctly implemented and blocks traversal, absolute escapes and symlink escapes. The defect is the configured root: FS_ROOTS is /home/ubuntu, so the jail correctly permits every file under the owner's home directory, including .ssh/authorized_keys, .hermes/auth.json and the server's own .env.",
       "impact": "One authenticated GET /fs/download returns the owner's SSH private keys, the live agent API credentials and the JWT signing secret and database password. Possession of JWT_SECRET is equivalent to full system compromise.",
       "evidence": "Measured against a live server with the production root value: GET /fs/download for .ssh/authorized_keys, .hermes/auth.json and server/.env each returned HTTP 200 with file contents. /etc/passwd was correctly refused with 403.",
-      "remediation_refs": ["R-01", "R-09", "R-10"],
-      "regression_test": "Extend server/test/pathjail.test.ts: .ssh/authorized_keys, .env and .hermes/ are denied inside a root; a normal file is allowed. Integration case: GET /fs/download for a denied path returns 403."
+      "remediation_refs": [
+        "R-01",
+        "R-09",
+        "R-10"
+      ],
+      "regression_test": "Extend server/test/pathjail.test.ts: .ssh/authorized_keys, .env and .hermes/ are denied inside a root; a normal file is allowed. Integration case: GET /fs/download for a denied path returns 403.",
+      "remediation_applied": [
+        "R-01"
+      ],
+      "remediation_note": "FS_ROOTS narrowed to /home/ubuntu/friday-one/storage and safePath() now denies credential paths (.ssh, .hermes, .env, *.pem, *.key, id_rsa/id_ed25519, credentials) even when they sit inside a root. Verified: 4/4 denylist cases return 403."
     },
     {
       "id": "F-03",
       "title": "WebSocket access token written to the server log",
       "severity": "high",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-532",
       "cvss41": 7.4,
-      "components": ["server"],
-      "locations": ["server/src/index.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/index.ts"
+      ],
       "description": "The WebSocket terminal authenticates via ?token=<jwt> in the query string. Fastify's default request logger records the full URL, so every terminal connection writes a live bearer token to the journal.",
       "impact": "Anyone who can read the server log obtains a 15-minute access token that opens the terminal. The log is on the same host as the file API that can serve the log file itself (F-02).",
       "evidence": "A WebSocket connection with a known token produced an 'incoming request' log line containing the token verbatim. The token was present in the log output and absent from the HTTP response body.",
-      "remediation_refs": ["R-03", "R-24"],
-      "regression_test": "Connect a WebSocket with a known token, capture log output, assert the token string does not appear. Invert the assertion in audit/audit-probes.mjs probe C."
+      "remediation_refs": [
+        "R-03",
+        "R-24"
+      ],
+      "regression_test": "Connect a WebSocket with a known token, capture log output, assert the token string does not appear. Invert the assertion in audit/audit-probes.mjs probe C.",
+      "remediation_applied": [
+        "R-03"
+      ],
+      "remediation_note": "The req serializer redacts ?token= in the request log. Verified: the live token is absent from the captured server log."
     },
     {
       "id": "F-04",
       "title": "Registration fails open when ALLOWED_EMAILS is unset",
       "severity": "high",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-284",
       "cvss41": 8.7,
-      "components": ["server"],
-      "locations": ["server/src/routes/auth.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/routes/auth.ts"
+      ],
       "description": "The registration allowlist is treated as advisory. When ALLOWED_EMAILS is empty or absent, the check is skipped entirely and any email may register. A newly registered device is created with trusted=true.",
       "impact": "An anonymous internet party registers a fully trusted device, which then reaches /fs/download and /ws/terminal. Combined with F-02 this is a complete compromise path from nothing but a public hostname.",
       "evidence": "Booted the server with ALLOWED_EMAILS empty; POST /auth/register returned 201 with a full token set and trusted=true. With the allowlist configured, a non-allowlisted email correctly returned 403.",
-      "remediation_refs": ["R-02", "R-25"],
+      "remediation_refs": [
+        "R-02",
+        "R-25"
+      ],
       "regression_test": "With ALLOWED_EMAILS empty, POST /auth/register returns 503. With it configured, a non-allowlisted email returns 403 and an allowlisted one returns 201.",
-      "note": "The production ALLOWED_EMAILS is currently set, so live risk is low; the finding is about the fail-open default."
+      "note": "The production ALLOWED_EMAILS is currently set, so live risk is low; the finding is about the fail-open default.",
+      "remediation_applied": [
+        "R-02"
+      ],
+      "remediation_note": "Registration now fails CLOSED with 503 when ALLOWED_EMAILS is empty, instead of opening anonymous trusted-device signup. Verified: 5/5 checks."
     },
     {
       "id": "F-05",
       "title": "X-Forwarded-For spoofing resets the rate-limit buckets",
       "severity": "high",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-348",
       "cvss41": 7.1,
-      "components": ["server"],
-      "locations": ["server/src/index.ts", "server/src/loginGuard.ts", "server/src/routes/auth.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/index.ts",
+        "server/src/loginGuard.ts",
+        "server/src/routes/auth.ts"
+      ],
       "description": "trustProxy is not set, so Fastify derives the client IP from the client-supplied X-Forwarded-For header. Both the global rate limiter and the per-IP login throttle key on that value.",
       "impact": "An attacker rotates the header to obtain a fresh bucket per request, bypassing both the global limiter and the per-IP login throttle. The per-account lockout still holds, so brute force is bounded, but the lockout becomes a denial-of-service vector against the owner: five wrong passwords lock them out for an hour, and repeated attempts escalate to 24 hours.",
       "evidence": "Measured: each request with a distinct X-Forwarded-For received a fresh bucket and no 429. A crafted XFF with the token as the first hop was accepted and used as the bucket key. audit_log.ip records the forged value.",
-      "remediation_refs": ["R-07"],
-      "regression_test": "A forged X-Forwarded-For does not reset the bucket; a forged CF-Connecting-IP is ignored. The lockout still engages on the account."
+      "remediation_refs": [
+        "R-07"
+      ],
+      "regression_test": "A forged X-Forwarded-For does not reset the bucket; a forged CF-Connecting-IP is ignored. The lockout still engages on the account.",
+      "remediation_applied": [
+        "R-07"
+      ],
+      "remediation_note": "trustProxy narrowed to 127.0.0.1; clientIp() resolves from CF-Connecting-IP and never from X-Forwarded-For; the rate limiter buckets on it explicitly. Verified: rotating X-Forwarded-For no longer resets the bucket (4 of 8 throttled), and the per-account lockout holds under rotating IPs (engaged on attempt 3)."
     },
     {
       "id": "F-06",
       "title": "JWT verification accepts any HMAC algorithm",
       "severity": "medium",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-347",
       "cvss41": 5.9,
-      "components": ["server"],
-      "locations": ["server/src/index.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/index.ts"
+      ],
       "description": "The @fastify/jwt registration does not restrict the algorithms option, so fast-jwt accepts HS256, HS384 and HS512 interchangeably. Tokens with no typ header are also accepted.",
       "impact": "A token signed with the correct secret but a different algorithm is accepted, widening the set of shapes the verifier trusts. Combined with the upstream fast-jwt advisories this compounds the verification surface.",
       "evidence": "Measured against the running server: an HS384-signed token and an HS512-signed token each returned 200 and were usable; alg:none and RS256 were correctly rejected.",
-      "remediation_refs": ["R-05", "R-06"],
-      "regression_test": "The 15-case acceptance matrix in audit/audit-algtest.mjs must reject every variant; add HS384, HS512 and missing-typ cases."
+      "remediation_refs": [
+        "R-05",
+        "R-06"
+      ],
+      "regression_test": "The 15-case acceptance matrix in audit/audit-algtest.mjs must reject every variant; add HS384, HS512 and missing-typ cases.",
+      "remediation_applied": [
+        "R-05"
+      ],
+      "remediation_note": "JWT verification pins algorithms to HS256. Verified: HS384 and HS512 tokens signed with the real secret are rejected."
     },
     {
       "id": "F-07",
       "title": "A revoked device keeps a working access token",
       "severity": "medium",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-613",
       "cvss41": 5.4,
-      "components": ["server"],
-      "locations": ["server/src/routes/auth.ts", "server/src/index.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/routes/auth.ts",
+        "server/src/index.ts"
+      ],
       "description": "Revoking a device kills its sessions, so the refresh token and the WebSocket both stop working. The 15-minute access token remains valid and is not checked against any revocation state.",
       "impact": "A stolen access token remains usable for up to 15 minutes after the owner revokes the device. Measured: GET /system with the old token returned 200 after revocation.",
       "evidence": "Revoked the device, then asserted: /ws/terminal refused with 4403, refresh returned 401, GET /system returned 200.",
-      "remediation_refs": ["R-08"],
-      "regression_test": "After revoking a device, GET /system with the old token returns 401."
+      "remediation_refs": [
+        "R-08"
+      ],
+      "regression_test": "After revoking a device, GET /system with the old token returns 401.",
+      "remediation_applied": [
+        "R-08"
+      ],
+      "remediation_note": "A device-id denylist makes revocation immediate; checked in authenticate, authenticateTrusted and the WebSocket handshake. Verified: 401 on /system and /fs/list immediately after revoke; WebSocket closes 4403."
     },
     {
       "id": "F-08",
       "title": "A JWT without an exp claim is accepted",
       "severity": "medium",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-613",
       "cvss41": 6.5,
-      "components": ["server"],
-      "locations": ["server/src/index.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/index.ts"
+      ],
       "description": "The claim validator does not require an exp claim, so a correctly signed token with no expiry is accepted and used indefinitely.",
       "impact": "Removes the expiry control entirely for any party who can produce a valid signature, and defeats the 15-minute bound that the revocation finding (F-07) depends on.",
       "evidence": "A token signed with the real secret carrying sub, did and role but no exp returned 200 and worked on /system.",
-      "remediation_refs": ["R-05"],
-      "regression_test": "A correctly signed token with no exp is rejected with 401."
+      "remediation_refs": [
+        "R-05"
+      ],
+      "regression_test": "A correctly signed token with no exp is rejected with 401.",
+      "remediation_applied": [
+        "R-05"
+      ],
+      "remediation_note": "assertTokenClaims() requires a numeric exp. Verified: a correctly signed token with no exp is rejected with 401."
     },
     {
       "id": "F-09",
@@ -163,45 +284,79 @@
       "status": "open",
       "cwe": "CWE-250",
       "cvss41": 6.8,
-      "components": ["infra", "server"],
-      "locations": ["infra/docker-compose.yml", "infra/.env"],
+      "components": [
+        "infra",
+        "server"
+      ],
+      "locations": [
+        "infra/docker-compose.yml",
+        "infra/.env"
+      ],
       "description": "POSTGRES_USER is set to friday, so the container bootstrap superuser and the application role are the same entity. The role holds Superuser, Create role, Create DB, Replication and Bypass RLS.",
       "impact": "Any code execution on the host, including the terminal child which holds DATABASE_URL, can read and rewrite every database on the host and can create roles.",
       "evidence": "docker exec friday-pg psql -U friday -d postgres -c '\\du' shows the attributes above. The audit harness demonstrated the application works with a role owning only its own tables and no additional grants.",
-      "remediation_refs": ["R-13"],
-      "regression_test": "As the application role, rolsuper is false and CREATE DATABASE is refused."
+      "remediation_refs": [
+        "R-13"
+      ],
+      "regression_test": "As the application role, rolsuper is false and CREATE DATABASE is refused.",
+      "remediation_note": "Not started. Needs a dedicated non-superuser database role."
     },
     {
       "id": "F-10",
       "title": "The terminal child inherits the server's full environment, including secrets",
       "severity": "medium",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-526",
       "cvss41": 6.3,
-      "components": ["server"],
-      "locations": ["server/src/routes/terminal.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/routes/terminal.ts"
+      ],
       "description": "The PTY is spawned with env: { ...process.env }, so the shell session holds JWT_SECRET, DATABASE_URL and FINGERPRINT_PEPPER, and can read ~/.ssh, ~/.hermes and the server .env as the ubuntu user.",
       "impact": "Anything executing in the terminal, including a Hermes or OpenCode agent acting on prompt-injected instructions, can read the signing key and the database password with a single command. This is the highest-value target for a prompt-injection attack.",
       "evidence": "Measured from inside the terminal session: JWT_PRESENT=YES, DB_PRESENT=YES, PEPPER_PRESENT=YES, CAN_READ_SSH=YES, CAN_READ_HERMES_AUTH=YES, CAN_READ_ENVFILE=YES.",
-      "remediation_refs": ["R-09", "R-11", "R-10"],
-      "regression_test": "The child environment contains no variable matching SECRET|TOKEN|PASSWORD|PEPPER|DATABASE_URL, and process.env.JWT_SECRET is undefined in the server process after startup."
+      "remediation_refs": [
+        "R-09",
+        "R-11",
+        "R-10"
+      ],
+      "regression_test": "The child environment contains no variable matching SECRET|TOKEN|PASSWORD|PEPPER|DATABASE_URL, and process.env.JWT_SECRET is undefined in the server process after startup.",
+      "remediation_applied": [
+        "R-09",
+        "R-11"
+      ],
+      "remediation_note": "config.ts scrubs the secrets from process.env at startup and the terminal child gets an explicit allowlist environment. Verified from inside a real terminal: 15 environment variables, none of the three secrets present."
     },
     {
       "id": "F-11",
       "title": "Two critical advisories in the JWT verification chain",
       "severity": "medium",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "partially-fixed",
       "cwe": "CWE-1395",
       "cvss41": 5.9,
-      "components": ["server"],
-      "locations": ["server/package.json", "server/package-lock.json"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/package.json",
+        "server/package-lock.json"
+      ],
       "description": "npm audit --omit=dev reports 2 critical advisories, both in fast-jwt <= 6.3.3, reached through @fastify/jwt 9.1.0. Ten advisories total in the chain. The GHSA-687g empty-secret auth bypass does not apply: the server uses a static secret and refuses to start when JWT_SECRET is blank (verified).",
       "impact": "Non-conforming tokens are accepted. Two were reproduced directly: a token carrying a crit header extension, and a token whose payload is a JSON array.",
       "evidence": "npm audit --omit=dev output: 2 critical. Reproduced: the crit-header token and the array-payload token each returned 200. alg:none, RS256, expired and wrong-key tokens were all correctly rejected.",
-      "remediation_refs": ["R-05", "R-06"],
-      "regression_test": "The acceptance matrix rejects all 15 variants, plus crit-header and array-payload cases. npm audit --omit=dev reports 0 critical."
+      "remediation_refs": [
+        "R-05",
+        "R-06"
+      ],
+      "regression_test": "The acceptance matrix rejects all 15 variants, plus crit-header and array-payload cases. npm audit --omit=dev reports 0 critical.",
+      "remediation_applied": [
+        "R-05"
+      ],
+      "remediation_note": "The exploitable behaviours are closed: algorithms pinned to HS256, crit headers rejected, array payloads rejected, exp required. The dependency itself is still fast-jwt 5.0.6; the upgrade (R-06) remains open."
     },
     {
       "id": "F-12",
@@ -211,13 +366,20 @@
       "status": "open",
       "cwe": "CWE-20",
       "cvss41": 4.3,
-      "components": ["server"],
-      "locations": ["server/src/routes/crash.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/routes/crash.ts"
+      ],
       "description": "The write endpoint is deliberately unauthenticated. The read query is WHERE user_id = $1 OR user_id IS NULL, so a report submitted without a fingerprint is surfaced to the owner.",
       "impact": "An internet party floods the owner's console with attacker-authored text and crafted stack traces, which the client renders. Nuisance plus low-grade content injection into the owner's UI.",
       "evidence": "POST /crash with no auth returned 202; the injected report then appeared in GET /crash for the owner.",
-      "remediation_refs": ["R-13"],
-      "regression_test": "An unauthenticated report without a fingerprint does not appear in GET /crash for the owner."
+      "remediation_refs": [
+        "R-13"
+      ],
+      "regression_test": "An unauthenticated report without a fingerprint does not appear in GET /crash for the owner.",
+      "remediation_note": "Not started. The read scope still surfaces unlinked reports."
     },
     {
       "id": "F-13",
@@ -227,13 +389,20 @@
       "status": "open",
       "cwe": "CWE-200",
       "cvss41": 4.0,
-      "components": ["server"],
-      "locations": ["server/src/routes/system.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/routes/system.ts"
+      ],
       "description": "/system uses authenticate rather than authenticateTrusted, so an untrusted device receives the hostname, OS build, CPU model, uptime, boot time, mount layout, interface names and rates, and the server's own PID and RSS.",
       "impact": "Host reconnaissance for an attacker who has the password but not a trusted device. /fs and /ws/terminal are correctly gated; /system is the exception.",
       "evidence": "Measured with an explicitly untrusted device: GET /system returned 200 with host=sky, platform=linux 7.0.0-1010-oracle, cpu=Neoverse-N1, pid, rss, booted_at and mounts.",
-      "remediation_refs": ["R-13"],
-      "regression_test": "An untrusted device gets 403 on /system and 200 on a minimal /system/summary."
+      "remediation_refs": [
+        "R-13"
+      ],
+      "regression_test": "An untrusted device gets 403 on /system and 200 on a minimal /system/summary.",
+      "remediation_note": "Not started. /system still uses authenticate, not authenticateTrusted."
     },
     {
       "id": "F-14",
@@ -243,13 +412,20 @@
       "status": "open",
       "cwe": "CWE-321",
       "cvss41": 6.2,
-      "components": ["android"],
-      "locations": ["android/app/build.gradle.kts"],
+      "components": [
+        "android"
+      ],
+      "locations": [
+        "android/app/build.gradle.kts"
+      ],
       "description": "The release buildType sets signingConfig = signingConfigs.getByName(\"debug\"). The comment immediately above states the correct intent, but the code does the opposite.",
       "impact": "The APK carries the well-known Android debug certificate, whose private key is public. Anyone can produce an update signed with the same key, so the platform's signature check provides no assurance for a sideloaded app.",
       "evidence": "Read from android/app/build.gradle.kts:32-39. Whether the currently installed APK is this build was not verified - no device was available.",
-      "remediation_refs": ["R-13"],
-      "regression_test": "apksigner verify --print-certs on the release APK shows the release certificate and not the debug certificate digest."
+      "remediation_refs": [
+        "R-13"
+      ],
+      "regression_test": "apksigner verify --print-certs on the release APK shows the release certificate and not the debug certificate digest.",
+      "remediation_note": "Not started. The release build is still debug-signed."
     },
     {
       "id": "F-15",
@@ -259,13 +435,20 @@
       "status": "open",
       "cwe": "CWE-693",
       "cvss41": 5.0,
-      "components": ["android"],
-      "locations": ["android/app/src/"],
+      "components": [
+        "android"
+      ],
+      "locations": [
+        "android/app/src/"
+      ],
       "description": "build.gradle.kts declares junit and an instrumentation runner, but no src/test and no src/androidTest directory exists. junit is declared and unused.",
       "impact": "Every client-side control is unverified and regressions are silent. This is the class of defect that let F-01 ship unnoticed.",
       "evidence": "find android -path '*/src/test*' -o -path '*/src/androidTest*' returns empty.",
-      "remediation_refs": ["R-14"],
-      "regression_test": "The deliverable is the test suite: JVM tests for DeviceIdentity, CertificatePinning, SessionStore and jsString escaping; instrumented tests for the biometric gate and the WebView origin policy."
+      "remediation_refs": [
+        "R-14"
+      ],
+      "regression_test": "The deliverable is the test suite: JVM tests for DeviceIdentity, CertificatePinning, SessionStore and jsString escaping; instrumented tests for the biometric gate and the WebView origin policy.",
+      "remediation_note": "Not started for the Android client. The server gained tests."
     },
     {
       "id": "F-16",
@@ -275,13 +458,23 @@
       "status": "open",
       "cwe": "CWE-269",
       "cvss41": 3.7,
-      "components": ["infra", "server"],
-      "locations": ["infra/systemd/friday-one-api.service", "server/src/routes/terminal.ts"],
+      "components": [
+        "infra",
+        "server"
+      ],
+      "locations": [
+        "infra/systemd/friday-one-api.service",
+        "server/src/routes/terminal.ts"
+      ],
       "description": "The ubuntu account has (ALL) NOPASSWD: ALL in sudoers, so without mitigation the terminal child escalates to root immediately (verified: uid=0(root)). The shipped systemd unit sets NoNewPrivileges=true, which the child inherits and which blocks sudo (verified: NoNewPrivs: 1, sudo refuses with the no-new-privileges message).",
       "impact": "Reduced. A remote shell is confined to the ubuntu user, but it can read that user's entire home directory including agent credentials and the server's secrets, and the sudoers rule is only a single systemd flag away from being reachable. The unit is also not currently installed, and ubuntu's docker group membership remains root-equivalent.",
       "evidence": "Measured both ways: without NoNewPrivileges, sudo -n id returns uid=0(root); under the unit, sudo refuses. systemdctl shows friday-one-api.service as not-found.",
-      "remediation_refs": ["R-10", "R-07"],
-      "regression_test": "Boot the server under the unit and assert sudo -n id from the terminal fails; assert the child cannot use the Docker socket."
+      "remediation_refs": [
+        "R-10",
+        "R-07"
+      ],
+      "regression_test": "Boot the server under the unit and assert sudo -n id from the terminal fails; assert the child cannot use the Docker socket.",
+      "remediation_note": "NoNewPrivileges is documented and verified effective, but a dedicated terminal user (R-10) is still the real fix."
     },
     {
       "id": "F-17",
@@ -291,45 +484,72 @@
       "status": "open",
       "cwe": "CWE-400",
       "cvss41": 4.3,
-      "components": ["server"],
-      "locations": ["server/src/routes/terminal.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/routes/terminal.ts"
+      ],
       "description": "No cap on concurrent terminal sessions, no per-connection output budget, no process-count limit, and no backpressure on the WebSocket. The terminal geometry is clamped and PTYs are reaped correctly on close, both verified.",
       "impact": "Availability. A client can open many connections, each spawning script and bash -l, and a single session can produce unbounded output into the socket buffer.",
       "evidence": "Source evidence plus the verified absence of any limit in the route; not load tested, by instruction.",
-      "remediation_refs": ["R-15"],
-      "regression_test": "The N+1th concurrent session is refused; a flood of output is disconnected rather than buffered."
+      "remediation_refs": [
+        "R-15"
+      ],
+      "regression_test": "The N+1th concurrent session is refused; a flood of output is disconnected rather than buffered.",
+      "remediation_note": "Not started. No cap on concurrent terminal sessions."
     },
     {
       "id": "F-18",
       "title": "ws is used but not declared as a dependency",
       "severity": "low",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-1104",
       "cvss41": 2.1,
-      "components": ["server"],
-      "locations": ["server/package.json"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/package.json"
+      ],
       "description": "ws@8.22.0 resolves from node_modules only as a transitive dependency of @fastify/websocket, and is imported directly by the server code.",
       "impact": "Works by accident today; a transitive graph change breaks it, and the version is not pinned.",
       "evidence": "grep of package.json finds no ws entry; node resolves it from node_modules.",
-      "remediation_refs": ["R-18"],
-      "regression_test": "npm ci on a clean checkout, then boot the server and connect a WebSocket."
+      "remediation_refs": [
+        "R-18"
+      ],
+      "regression_test": "npm ci on a clean checkout, then boot the server and connect a WebSocket.",
+      "remediation_applied": [
+        "R-18"
+      ],
+      "remediation_note": "ws is now a direct dependency pinned to 8.22.0."
     },
     {
       "id": "F-19",
       "title": "The project is not in version control",
       "severity": "low",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-494",
       "cvss41": 3.3,
-      "components": ["repo"],
-      "locations": ["/home/ubuntu/friday-one"],
+      "components": [
+        "repo"
+      ],
+      "locations": [
+        "/home/ubuntu/friday-one"
+      ],
       "description": "There is no .git directory: no history, no branch, no revert, no provenance. infra/endpoint.json is rewritten every five minutes by the publisher.",
       "impact": "A bad deploy cannot be rolled back, a compromised file cannot be diffed against a known-good state, and the audit's own remediations have nowhere to live. It is also why the brief's scan of Git history for committed secrets is unfulfillable.",
       "evidence": "ls -d .git returns nothing; git log --oneline -5 exits 128.",
-      "remediation_refs": ["R-16"],
-      "regression_test": "git status --porcelain is empty after a clean deploy; git fsck passes."
+      "remediation_refs": [
+        "R-16"
+      ],
+      "regression_test": "git status --porcelain is empty after a clean deploy; git fsck passes.",
+      "remediation_applied": [
+        "R-16"
+      ],
+      "remediation_note": "git initialised, .gitignore added, initial commit plus four remediated commits, tagged audit-p0/p1/p1b."
     },
     {
       "id": "F-20",
@@ -339,13 +559,20 @@
       "status": "open",
       "cwe": "CWE-778",
       "cvss41": 3.1,
-      "components": ["repo"],
-      "locations": ["/home/ubuntu/friday-one"],
+      "components": [
+        "repo"
+      ],
+      "locations": [
+        "/home/ubuntu/friday-one"
+      ],
       "description": "No pipeline configuration exists. The only quality gates are manual, and the Android build is gated by a flock on /tmp/gradle.lock, which is admission control rather than a quality gate.",
       "impact": "No automated verification of any kind. F-01, F-15, F-18 and F-19 are all defects a five-line workflow would have caught.",
       "evidence": "No .github directory and no pipeline files anywhere in the tree.",
-      "remediation_refs": ["R-17"],
-      "regression_test": "The pipeline runs npm ci, npm audit, tsc, the test suite, gitleaks, the Android lint and unit tests, and an apksigner signature assertion."
+      "remediation_refs": [
+        "R-17"
+      ],
+      "regression_test": "The pipeline runs npm ci, npm audit, tsc, the test suite, gitleaks, the Android lint and unit tests, and an apksigner signature assertion.",
+      "remediation_note": "Not started. No CI pipeline yet."
     },
     {
       "id": "F-21",
@@ -355,13 +582,20 @@
       "status": "open",
       "cwe": "CWE-494",
       "cvss41": 2.4,
-      "components": ["android"],
-      "locations": ["android/app/src/main/assets/terminal/xterm.js"],
+      "components": [
+        "android"
+      ],
+      "locations": [
+        "android/app/src/main/assets/terminal/xterm.js"
+      ],
       "description": "The vendored bundle is 289441 bytes, minified, with no version comment, no licence header and no recorded SHA-256. It ends with a sourceMappingURL comment for a map that is absent.",
       "impact": "The bundle cannot be traced to an upstream release, so a future diff against upstream is impossible and a compromised build would go unnoticed. Separately, a credential-pattern scan of the tree found exactly one hit, a test-only literal in server/test/auth.test.ts, so no real secret is committed. server/.env and infra/.env are both 0600, which is correct.",
       "evidence": "File inspection and a full-tree pattern scan.",
-      "remediation_refs": ["R-19"],
-      "regression_test": "CI re-hashes the file and compares it against the recorded digest in THIRD-PARTY.md."
+      "remediation_refs": [
+        "R-19"
+      ],
+      "regression_test": "CI re-hashes the file and compares it against the recorded digest in THIRD-PARTY.md.",
+      "remediation_note": "Not started. xterm.js still has no recorded version or hash."
     },
     {
       "id": "F-22",
@@ -371,13 +605,24 @@
       "status": "open",
       "cwe": "CWE-345",
       "cvss41": 3.7,
-      "components": ["infra", "android"],
-      "locations": ["infra/endpoint.json", "scripts/publish-endpoint.sh", "android/app/src/main/java/com/friday/one/data/EndpointDiscovery.kt"],
+      "components": [
+        "infra",
+        "android"
+      ],
+      "locations": [
+        "infra/endpoint.json",
+        "scripts/publish-endpoint.sh",
+        "android/app/src/main/java/com/friday/one/data/EndpointDiscovery.kt"
+      ],
       "description": "The published quick-tunnel endpoint returns HTTP 530, and the systemd units for the API and the tunnel are not installed. The app discovers its server from a public gist over HTTPS, with no signature and no owner check. The client does enforce that the URL is https and that the new host answers /health, but the attacker's host serves both.",
       "impact": "Availability now, since the app points at a dead URL. Integrity later: anyone who can write to that gist redirects every installed copy of the app to a host they control, and the app then posts the owner's password and refresh token there. The gist id is discoverable from the APK.",
       "evidence": "The published endpoint returns 530. systemdctl shows both friday-one units as not-found. EndpointDiscovery.kt:91-99 shows the unauthenticated fetch and the two guards.",
-      "remediation_refs": ["R-12", "R-04"],
-      "regression_test": "A discovery document pointing at a hostile host is not adopted; the app reaches the server with no discovery fetch once R-12 lands."
+      "remediation_refs": [
+        "R-12",
+        "R-04"
+      ],
+      "regression_test": "A discovery document pointing at a hostile host is not adopted; the app reaches the server with no discovery fetch once R-12 lands.",
+      "remediation_note": "Not started. Tunnel still down; discovery still unauthenticated."
     },
     {
       "id": "F-23",
@@ -387,13 +632,20 @@
       "status": "open",
       "cwe": "CWE-459",
       "cvss41": null,
-      "components": ["server"],
-      "locations": ["server/src/routes/crash.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/routes/crash.ts"
+      ],
       "description": "GET /crash returns every unlinked report ever submitted, with no retention policy, no pruning job and no delete endpoint.",
       "impact": "Unbounded storage of attacker-controlled content, and the owner's console can never be cleaned.",
       "evidence": "Read from the route; the retention behaviour was observed during the F-12 test.",
-      "remediation_refs": ["R-20"],
-      "regression_test": "Reports older than the retention window are not returned."
+      "remediation_refs": [
+        "R-20"
+      ],
+      "regression_test": "Reports older than the retention window are not returned.",
+      "remediation_note": "Not started."
     },
     {
       "id": "F-24",
@@ -403,13 +655,21 @@
       "status": "open",
       "cwe": "CWE-20",
       "cvss41": null,
-      "components": ["server"],
-      "locations": ["server/src/routes/auth.ts", "server/src/schema.sql"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/routes/auth.ts",
+        "server/src/schema.sql"
+      ],
       "description": "name, platform and appVersion are accepted from the client and stored as-is, with name and platform only length-capped at 120 characters, then rendered in the owner's device list.",
       "impact": "Display-layer spoofing. A hostile device can be labelled to look legitimate. No authorisation decision depends on these fields.",
       "evidence": "Read from the route and the schema; a crafted label was accepted and stored during testing.",
-      "remediation_refs": ["R-21"],
-      "regression_test": "platform is derived from the verified device key; name is rendered as user-supplied."
+      "remediation_refs": [
+        "R-21"
+      ],
+      "regression_test": "platform is derived from the verified device key; name is rendered as user-supplied.",
+      "remediation_note": "Not started."
     },
     {
       "id": "F-25",
@@ -419,13 +679,21 @@
       "status": "open",
       "cwe": "CWE-942",
       "cvss41": null,
-      "components": ["server"],
-      "locations": ["server/src/index.ts", "server/.env"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/index.ts",
+        "server/.env"
+      ],
       "description": "CORS_ORIGINS is empty, so no browser origin is allowed - the safe default. But @fastify/cors still responds to preflight, and the API is reachable from any origin by a non-browser client, which is the real threat model.",
       "impact": "Informational today, because the token is a bearer header and not a cookie. If CORS_ORIGINS is ever set to *, a malicious page in any browser could drive the API.",
       "evidence": "Read from the source and the .env key listing.",
-      "remediation_refs": ["R-22"],
-      "regression_test": "A request with an arbitrary Origin header is refused by CORS; the allowlist is never *."
+      "remediation_refs": [
+        "R-22"
+      ],
+      "regression_test": "A request with an arbitrary Origin header is refused by CORS; the allowlist is never *.",
+      "remediation_note": "Not started."
     },
     {
       "id": "F-26",
@@ -435,13 +703,21 @@
       "status": "open",
       "cwe": "CWE-200",
       "cvss41": null,
-      "components": ["server"],
-      "locations": ["server/src/seed-owner.ts", "server/src/routes/auth.ts"],
+      "components": [
+        "server"
+      ],
+      "locations": [
+        "server/src/seed-owner.ts",
+        "server/src/routes/auth.ts"
+      ],
       "description": "The audit log stores { email } in the detail JSON for register and login events, and the owner's email is returned by GET /system/audit. seed-owner.ts also hardcodes the display name Sachin and logs the owner's email and every disabled account's email to stdout.",
       "impact": "Informational. The email is already the account identifier and the log lives on the owner's own host, but it widens the blast radius of a database leak slightly and embeds a personal name in source.",
       "evidence": "Read from the source; the plaintext email was observed in an audit_log row during testing.",
-      "remediation_refs": ["R-23"],
-      "regression_test": "The audit detail no longer contains a plaintext email."
+      "remediation_refs": [
+        "R-23"
+      ],
+      "regression_test": "The audit detail no longer contains a plaintext email.",
+      "remediation_note": "Not started."
     }
   ],
   "unvalidated_leads": [
@@ -472,10 +748,39 @@
   ],
   "remediation_plan": {
     "document": "remediation-roadmap.md",
-    "p0": ["R-01", "R-02", "R-03", "R-18"],
-    "p1": ["R-05", "R-06", "R-07", "R-08", "R-09"],
-    "p2": ["R-04", "R-10", "R-11", "R-12", "R-13"],
-    "p3": ["R-14", "R-15", "R-16", "R-17", "R-19", "R-20", "R-21", "R-22", "R-23", "R-24", "R-25"],
+    "p0": [
+      "R-01",
+      "R-02",
+      "R-03",
+      "R-18"
+    ],
+    "p1": [
+      "R-05",
+      "R-06",
+      "R-07",
+      "R-08",
+      "R-09"
+    ],
+    "p2": [
+      "R-04",
+      "R-10",
+      "R-11",
+      "R-12",
+      "R-13"
+    ],
+    "p3": [
+      "R-14",
+      "R-15",
+      "R-16",
+      "R-17",
+      "R-19",
+      "R-20",
+      "R-21",
+      "R-22",
+      "R-23",
+      "R-24",
+      "R-25"
+    ],
     "owner_decisions_required": [
       "Keep the general-purpose bash -l terminal with isolation, or remove kind=shell",
       "Keep the registration endpoint, or provision only via seed-owner.ts",
@@ -513,5 +818,55 @@
       "audit-verify.mjs"
     ],
     "note": "Harnesses are self-cleaning: they create a dedicated friday_audit role and database, run the real server on an isolated port, then drop the role, the database and the process. All were removed after the audit."
+  },
+  "remediation_progress": {
+    "commits": [
+      "789777d Initial import + P0 security fixes",
+      "3669d64 P1: harden JWT verification and stop DB error leakage",
+      "0a497fc P1: fix client-IP spoofing, add immediate revocation, harden the harness",
+      "87d5e37 P1: move secrets out of the process environment (F-10)"
+    ],
+    "tags": [
+      "audit-p0-20261023",
+      "audit-p1-20261024",
+      "audit-p1b-20261024"
+    ],
+    "verification": {
+      "tsc": "clean",
+      "unit_tests": "20/20",
+      "e2e_checks": "59/59",
+      "r02_checks": "5/5",
+      "r07_checks": "5/5",
+      "r09_checks": "7/7"
+    },
+    "closed": [
+      "F-02",
+      "F-03",
+      "F-04",
+      "F-05",
+      "F-06",
+      "F-07",
+      "F-08",
+      "F-10",
+      "F-18",
+      "F-19"
+    ],
+    "remaining": [
+      "F-01",
+      "F-09",
+      "F-12",
+      "F-13",
+      "F-14",
+      "F-15",
+      "F-16",
+      "F-17",
+      "F-20",
+      "F-21",
+      "F-22",
+      "F-23",
+      "F-24",
+      "F-25",
+      "F-26"
+    ]
   }
 }

@@ -23,7 +23,19 @@ Specifically:
 
 The good news: the *backend* is in far better shape than the client. The path jail, the refresh rotation, the lockout, and the trust gate all behave correctly under adversarial testing.
 
-**Verdict: not production-ready.** Two P0 items, four P1 items, and a design decision (Stage 4 remote shell) that needs to be consciously accepted or changed.
+**Verdict at audit time: not production-ready.** Two P0 items, four P1 items, and a design decision (Stage 4 remote shell) that needs to be consciously accepted or changed.
+
+**Update 2026-10-24 — remediation in progress.** The P0 batch and most of P1 are
+committed and re-verified: **10 findings closed**, 1 partially closed, 15 open.
+The four original P0 blockers — F-02 (`FS_ROOTS`), F-04 (fail-open
+registration), F-03 (token in the log) and F-05 (spoofable client IP) — are all
+closed, as are F-06/F-07/F-08 (JWT hardening and immediate revocation) and
+F-10 (secrets inherited by the terminal child).
+**Still open and worth attention first: F-14** (release APK is debug-signed),
+**F-01** (the Android security layer is dead code), **F-09** (superuser
+database role) and **F-22** (tunnel down, unauthenticated discovery).
+See the status section at the top of `findings.md` and `findings.json` for the
+per-finding record.
 
 **Severity distribution:** Critical 2 · High 3 · Medium 10 · Low 7 · Informational 4 — **26 findings**
 
