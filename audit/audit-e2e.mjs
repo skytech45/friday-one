@@ -480,6 +480,33 @@ say("\n=== 13. crash endpoint (unauthenticated by design) ===");
   check("oversized crash message is rejected (400)", r2.status === 400, `status=${r2.status}`);
 }
 
+say("\n=== 13b. F-12: unlinked crash reports are invisible to the owner ===");
+{
+  const inject = await post("/crash", { message: "INJECTED-F12 hostile content", severity: "fatal" });
+  check("injected report without fingerprint accepted (202, stored unlinked)", inject.status === 202, `status=${inject.status}`);
+
+  const owned = await post("/crash", { message: "OWNED-F12 genuine crash", severity: "error", fingerprint: ownerFp });
+  check("report with the owner's device fingerprint accepted (202)", owned.status === 202, `status=${owned.status}`);
+
+  const dirty = await post("/crash", {
+    message: "DIRTY-F12 \u001B[31mansi\u0007nul\u0000tail",
+    stackTrace: "at x\n\u001B[0mreset",
+    fingerprint: ownerFp,
+  });
+  check("report containing control characters accepted (202)", dirty.status === 202, `status=${dirty.status}`);
+
+  const list = await get("/crash", ownerTok);
+  check("GET /crash is 200 for the trusted owner", list.status === 200, `status=${list.status}`);
+  const seen = JSON.stringify(list.body?.reports ?? []);
+  check("the injected no-fingerprint report is NOT served to the owner", !seen.includes("INJECTED-F12"));
+  check("the fingerprint-linked report IS served to the owner", seen.includes("OWNED-F12"));
+
+  const own = (list.body?.reports ?? []).filter((x) => typeof x.message === "string" && x.message.startsWith("DIRTY-F12"));
+  check("the dirty report was linked (fingerprint matched) so it is visible", own.length === 1, `matches=${own.length}`);
+  check("control characters were stripped on write", own.length === 1 && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(own[0].message + (own[0].stack_trace ?? "")),
+    `message=${JSON.stringify(own[0]?.message)}`);
+}
+
 // ---------------------------------------------------------------- cleanup
 // Registered immediately after the server is spawned so that ANY exit path
 // (assertion failure, unhandled rejection, Ctrl-C) tears the server down. A

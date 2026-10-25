@@ -10,8 +10,16 @@ const crashSchema = z.object({
   severity: z.enum(["info", "warning", "error", "fatal"]).default("error"),
   message: z.string().min(1).max(4000),
   stackTrace: z.string().max(60_000).optional(),
-  context: z.record(z.unknown()).optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
 });
+
+// F-12: the write path is unauthenticated, so message/stack_trace are hostile
+// input. Strip control characters (NUL, ANSI/C1 escapes) but keep \n and \t —
+// a stack trace without newlines is useless — and cap length at the boundary
+// rather than trusting the schema alone.
+function sanitizeText(s: string, max: number): string {
+  return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "").slice(0, max);
+}
 
 /**
  * Crash reports are accepted WITHOUT authentication on purpose: the crashiest
@@ -35,6 +43,8 @@ export async function crashRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(400).send({ error: "invalid_request", detail: parsed.error.issues });
       }
       const b = parsed.data;
+      const message = sanitizeText(b.message, 4000);
+      const stackTrace = b.stackTrace === undefined ? null : sanitizeText(b.stackTrace, 60_000);
 
       let userId: string | null = null;
       let deviceId: string | null = null;
@@ -66,24 +76,28 @@ export async function crashRoutes(app: FastifyInstance): Promise<void> {
           b.appVersion ?? null,
           b.buildType ?? null,
           b.severity,
-          b.message,
-          b.stackTrace ?? null,
+          message,
+          stackTrace,
           b.context ? JSON.stringify(b.context) : null,
         ],
       );
 
       // A stable dedupe hash so the same crash on 500 devices is one issue.
-      const signature = sha256(`${b.message}|${(b.stackTrace ?? "").slice(0, 400)}`).slice(0, 16);
+      const signature = sha256(`${message}|${(stackTrace ?? "").slice(0, 400)}`).slice(0, 16);
       return reply.code(202).send({ ok: true, id: r.rows[0]?.id, signature });
     },
   );
 
   app.get("/crash", { preHandler: app.authenticateTrusted }, async (req, reply) => {
+    // F-12: only reports LINKED to this user are served. Unlinked reports
+    // (no fingerprint, or a fingerprint matching no known device) are kept in
+    // the table for manual inspection but are never handed to the console —
+    // anyone on the internet could otherwise inject content into it.
     const rows = await query(
       `SELECT id, severity, message, stack_trace, app_version, build_type,
               context, created_at, reviewed
          FROM crash_reports
-        WHERE user_id = $1 OR user_id IS NULL
+        WHERE user_id = $1
         ORDER BY created_at DESC LIMIT 100`,
       [req.user.sub],
     );
