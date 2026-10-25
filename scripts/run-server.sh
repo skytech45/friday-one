@@ -20,5 +20,3 @@ npx tsx src/migrate.ts
 # Start the API. It binds to 127.0.0.1:8787 by default (see server/src/index.ts).
 # The tunnel is what exposes it; the server never listens on a public interface.
 exec npx tsx src/index.ts
-
-</content>

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the FRIDAY One nightly backup at 04:35
+
+[Timer]
+OnCalendar=*-*-* 04:35:00
+# If the box was off/asleep at 04:35, run when it next boots.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

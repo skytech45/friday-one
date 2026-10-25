@@ -20,9 +20,13 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-# cloudflared needs no writable paths on disk for a quick tunnel.
-# For a named tunnel it writes a cert to ~/.cloudflared — add that to
-# ReadWritePaths when migrating to permanent tunnels.
+# The ONLY writable path: where tunnel.sh records the assigned quick-tunnel
+# hostname for friday-endpoint-publisher.service to publish to the gist.
+# (ProtectSystem=strict makes everything else read-only; /tmp is not usable
+# here once PrivateTmp isolates it.)
+ReadWritePaths=/home/ubuntu/friday-one/logs
+# For a named tunnel cloudflared writes a cert to ~/.cloudflared — add that
+# to ReadWritePaths when migrating to permanent tunnels.
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
@@ -30,5 +34,3 @@ LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
-
-</content>

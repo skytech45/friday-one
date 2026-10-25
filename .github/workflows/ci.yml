@@ -1,0 +1,91 @@
+# FRIDAY One CI (F-20).
+#
+# Gates, in order: dependency audit, typecheck, unit tests, then the full
+# end-to-end acceptance suite (71 checks) and the F-09 privilege regression
+# against a REAL Postgres container — the same stack the deployment runs.
+# Android lint/tests are pending F-15 (no test sources exist yet); the release
+# signature assertion is pending F-14 (keystore is owner-supplied). Add both
+# here when they land.
+
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  server:
+    name: audit, typecheck, unit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: npm audit (prod deps must be clean)
+        run: npm audit --omit=dev
+      - run: npm run typecheck
+      - name: unit tests
+        run: npx tsx --test test/*.test.ts
+
+  e2e:
+    name: e2e + F-09 regression (real Postgres)
+    runs-on: ubuntu-latest
+    needs: server
+    env:
+      APP_ROLE_PW: ci-app-role-password-0f9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Start postgres (same image/layout as the deployment)
+        run: |
+          docker run -d --name friday-pg \
+            -e POSTGRES_DB=friday -e POSTGRES_USER=friday -e POSTGRES_PASSWORD=friday \
+            -p 127.0.0.1:5433:5432 postgres:16-alpine
+          for i in $(seq 1 30); do
+            if docker exec friday-pg pg_isready -U friday -d friday >/dev/null 2>&1; then exit 0; fi
+            sleep 1
+          done
+          echo "postgres did not become ready" && exit 1
+      - name: Install server deps
+        working-directory: server
+        run: npm ci --ignore-scripts
+      - name: Expose deps to the audit harnesses
+        run: ln -s ../server/node_modules audit/node_modules
+      - name: Provision the least-privilege app role (exercises infra/setup-app-role.sh)
+        run: APP_ROLE_PASSWORD="$APP_ROLE_PW" infra/setup-app-role.sh
+      - name: Create CI server/.env (gitignored; CI-only secrets)
+        run: |
+          cat > server/.env <<EOF
+          DATABASE_URL=postgres://friday_app:${APP_ROLE_PW}@127.0.0.1:5433/friday
+          MIGRATE_DATABASE_URL=postgres://friday:friday@127.0.0.1:5433/friday
+          JWT_SECRET=ci-jwt-secret-$(openssl rand -hex 24)
+          FINGERPRINT_PEPPER=ci-pepper-$(openssl rand -hex 16)
+          EOF
+      - name: F-09 privilege regression
+        run: node audit/audit-f09.mjs
+      - name: Full e2e acceptance suite
+        run: node audit/audit-e2e.mjs
+
+  gitleaks:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

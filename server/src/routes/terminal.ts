@@ -11,7 +11,10 @@ import { query } from "../db.js";
  * would be remote code execution by design.
  */
 const COMMANDS: Record<string, { cmd: string; label: string }> = {
-  hermes: { cmd: "hermes --tui", label: "Hermes TUI" },
+  // Absolute path: hermes lives in ~/.local/bin, which is deliberately NOT in
+  // the terminal child's PATH (childEnv allows only system dirs), so a bare
+  // "hermes" fails with ENOENT.
+  hermes: { cmd: "/home/ubuntu/.local/bin/hermes --tui", label: "Hermes TUI" },
   opencode: { cmd: "opencode", label: "OpenCode" },
   shell: { cmd: "bash -l", label: "Shell" },
 };

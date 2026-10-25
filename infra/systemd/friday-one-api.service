@@ -35,5 +35,3 @@ LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
-
-</content>

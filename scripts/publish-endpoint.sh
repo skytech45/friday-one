@@ -13,7 +13,10 @@ set -euo pipefail
 
 GIST_ID="462b9df17f30fd7029e4ead519103f20"
 JSON=/home/ubuntu/friday-one/infra/endpoint.json
-LOG=/tmp/cf-tunnel.log
+# Same file tunnel.sh writes (its stderr is redirected here). Must match the
+# LOG path in scripts/tunnel.sh and stay inside the tunnel unit's
+# ReadWritePaths.
+LOG=/home/ubuntu/friday-one/logs/cf-tunnel.log
 
 # cloudflared prints the assigned hostname once on startup.
 URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG" 2>/dev/null | tail -1)
@@ -37,7 +40,10 @@ if [ "$URL" = "$PREV" ]; then
   exit 0
 fi
 
-gh gist edit "$GIST_ID" -f "$JSON" >/dev/null
+# Positional form: gh updates the gist file whose name matches the local
+# basename (endpoint.json). (-f is a RENAME flag, not a content flag — using
+# it here made gh look for a gist file literally named after the path.)
+gh gist edit "$GIST_ID" "$JSON" >/dev/null
 echo "publish-endpoint: updated $PREV -> $URL"
 
 # Verify the change is actually publicly visible rather than trusting gh's exit code.

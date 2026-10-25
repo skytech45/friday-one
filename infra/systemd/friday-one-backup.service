@@ -1,0 +1,18 @@
+[Unit]
+Description=FRIDAY One nightly off-host backup (repo push + pg_dump)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu
+ExecStart=/home/ubuntu/friday-one/scripts/nightly-backup.sh
+# Append-only log lives with the repo's other runtime logs.
+StandardOutput=append:/home/ubuntu/friday-one/logs/backup.log
+StandardError=append:/home/ubuntu/friday-one/logs/backup.log
+
+[Install]
+WantedBy=multi-user.target

@@ -178,4 +178,3 @@ The Cloudflare Tunnel deployment does **not** modify, disable, or replace the
 Tailscale configuration. Both coexist: Tailscale for machine-to-machine access,
 Cloudflare Tunnel for the mobile app's HTTPS endpoint.
 
-</content>
