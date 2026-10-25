@@ -4,6 +4,31 @@
 
 ---
 
+## P0 REMEDIATION UPDATE (2026-10-25, post-audit)
+
+Both P0 items from §D are now **implemented, deployed and live-tested**:
+
+**Before:** pairing endpoints unthrottled (brute-force bounded only by the 5-attempt budget); gateway had no `message_id` dedup or sequence enforcement.
+
+**After:**
+- **Rate limiting** — `infra/supabase/migrations/0004_rate_limits.sql` (shared fixed-window counter + atomic `consume_rate_limit` RPC in Supabase, the actual shared store for the serverless deployment — in-memory counters were rejected as per-instance) and `control-plane/lib/ratelimit.ts` (client IP ONLY from `x-vercel-forwarded-for`/`x-real-ip`; spoofed `x-forwarded-for` cannot shift the bucket; **fail closed** — limiter outage ⇒ 503, never unthrottled). Wired into all four pairing routes: enrollment create (10/h), session open (10/h), session poll (300/10min — connector polls every 3 s), claim (30/h, failed claims weigh 5×), revoke (30/h). Uniform `429` + `Retry-After`. Thresholds env-overridable (`RL_*`).
+- **Gateway replay protection** — `gateway/src/replay.ts` (`ReplayGuard`): per-authenticated-identity bounded LRU dedup of `message_id` (duplicates dropped silently — idempotent per protocol) and per-identity sequence baseline (set from the AUTH message, strictly increasing after; stale/out-of-order → close `4400 sequence_violation`). Baseline resets on fresh authenticated connection so restarts recover; content-level idempotency (`command_jobs`) covers cross-connection replays. Single-instance in-memory state documented in `docs/REALTIME_PROTOCOL.md` §2 (multi-instance requires the shared store).
+
+**Files changed:** `gateway/src/replay.ts` (new), `gateway/src/index.ts`, `control-plane/lib/ratelimit.ts` (new), `control-plane/api/v1/enrollments/index.ts`, `control-plane/api/v1/enrollments/session.ts`, `control-plane/api/v1/enrollments/[id]/claim.ts`, `control-plane/api/v1/servers/[id]/revoke.ts`, `control-plane/deploy.py`, `infra/supabase/migrations/0004_rate_limits.sql` (new), `docs/REALTIME_PROTOCOL.md`, `docs/GOOGLE_OAUTH_SETUP.md`, `connector/package.json`.
+
+**Tests actually run (live production deployment):**
+- Rate limit burst: 13× POST /enrollments → **10× 201 then 429**, `Retry-After: 3580` present ✓
+- Spoofed `x-forwarded-for: 8.8.8.8` after exhaustion → **429** (no bypass) ✓
+- Claim endpoint independent budget → **404** (not 429) ✓
+- Gateway duplicate `message_id` pair → first **accepted**, replay **dropped** (exactly 1 `command.accepted`) ✓
+- Gateway stale sequence (90 < baseline 100) → close **4400 sequence_violation** ✓
+- Valid flow after fixes → **accepted=1, delta streamed, completed** ✓
+- Policy allow/deny/no-rule E2E → allow executes ("OK2"), deny → `policy_deny`, no rule → `policy_require_approval` ✓ (regression check)
+
+**Updated P0 status:** both fixed and verified. Updated P1: credential rotation, `command.cancel` end-to-end, Google OAuth live-verify (owner enables provider), installer run on a fresh VPS. P2 unchanged (multi-instance routing, ACP backpressure, release signatures, gateway env validation).
+
+---
+
 ## A. Overall Status
 
 | Area | Status |

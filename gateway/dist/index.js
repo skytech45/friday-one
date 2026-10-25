@@ -15,6 +15,7 @@ import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { ENVELOPE_BASE } from "./protocol.js";
+import { ReplayGuard } from "./replay.js";
 import { findLiveCredential, getServerForCredential, touchLastSeen, upsertQueuedJob, setJobState, findQueuedJob, persistPermissionRequest, decidePermissionRequest, } from "./supabase.js";
 const PORT = Number(process.env.PORT ?? 8790);
 const HOST = process.env.HOST ?? "127.0.0.1"; // loopback; TLS via tunnel/reverse proxy
@@ -23,6 +24,8 @@ const SUPABASE_URL = process.env.SUPABASE_URL.replace(/\/$/, "");
 const JWKS = createRemoteJWKSet(new URL(process.env.SUPABASE_JWKS_URL));
 const connections = new Set();
 const connectorsByServer = new Map(); // one live conn per server
+const replayGuard = new ReplayGuard();
+const identities = new Set(); // live replay identities (cleanup marker)
 const log = (m) => console.log(`${new Date().toISOString()} ${m}`);
 /** --- app auth ------------------------------------------------------------ */
 async function verifyAppToken(token) {
@@ -40,6 +43,7 @@ function sendTo(conn, env) {
         conn.socket.send(JSON.stringify(env));
 }
 function errorClose(socket, code, reason) {
+    log(`closing ${code} ${reason}`);
     try {
         socket.close(code, reason);
     }
@@ -233,7 +237,8 @@ wss.on("connection", (socket) => {
         if (!env.success)
             return errorClose(socket, 4400, "invalid_envelope");
         if (!conn) {
-            // First message MUST authenticate.
+            // First message MUST authenticate. The replay guard's baseline is set
+            // from the auth message's sequence; later messages must increase.
             (async () => {
                 if (env.data.event_type === "auth.connector") {
                     const credential = env.data.payload.credential;
@@ -251,6 +256,12 @@ wss.on("connection", (socket) => {
                     conn = { kind: "connector", serverId: server.id, ownerId: server.owner_id, connectorId: cred.id, socket };
                     connections.add(conn);
                     connectorsByServer.set(server.id, conn);
+                    // Replay guard identity: the CONNECTOR credential id (stable across
+                    // reconnects for this process, unique per pairing).
+                    const identity = `connector:${cred.id}`;
+                    identities.add(identity); // marker for cleanup
+                    replayGuard.initBaseline(identity, env.data.sequence);
+                    conn.replayIdentity = identity;
                     sendTo(conn, gatewayEnvelope({
                         correlationId: env.data.message_id, serverId: server.id, connectorId: cred.id,
                         eventType: "auth.resume.ok",
@@ -267,6 +278,9 @@ wss.on("connection", (socket) => {
                         return errorClose(socket, 4403, "invalid_token");
                     conn = { kind: "app", userId, socket };
                     connections.add(conn);
+                    const identity = `app:${userId}`;
+                    replayGuard.initBaseline(identity, env.data.sequence);
+                    conn.replayIdentity = identity;
                     sendTo(conn, gatewayEnvelope({
                         correlationId: env.data.message_id, serverId: crypto.randomUUID(), connectorId: null,
                         eventType: "auth.resume.ok", payload: { user_id: userId },
@@ -281,6 +295,16 @@ wss.on("connection", (socket) => {
                 errorClose(socket, 1011, "auth_failed");
             });
             return;
+        }
+        // Replay protection (P0): every authenticated message is checked against
+        // the identity's dedup set and sequence baseline.
+        const replayIdentity = conn.replayIdentity;
+        if (replayIdentity) {
+            const verdict = replayGuard.check(replayIdentity, env.data.message_id, env.data.sequence);
+            if (verdict === "duplicate")
+                return; // idempotent drop per protocol
+            if (verdict === "stale")
+                return errorClose(socket, 4400, "sequence_violation");
         }
         if (conn.kind === "connector") {
             void handleConnectorMessage(conn, env.data).catch((e) => log(`connector msg error: ${e.message}`));

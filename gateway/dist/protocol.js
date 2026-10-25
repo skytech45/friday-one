@@ -22,6 +22,7 @@ export const ENVELOPE_BASE = z.object({
 /** Event types the CONNECTOR may receive. Anything not listed → reject. */
 export const CONNECTOR_INBOUND = [
     "auth.resume.ok",
+    "command.dispatch",
     "permission.decided",
     "command.cancel",
     "policy.update",

@@ -7,9 +7,19 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { openEnrollmentSession, pickupCredential } from "../../../lib/enrollments.js";
+import { clientIp, consumeLimit, limitResponse } from "../../../lib/ratelimit.js";
 import { json, fail } from "../../../lib/util.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
+  const ip = clientIp(req);
+  // Session-open is the expensive operation; polls are cheap but numerous.
+  if (req.method === "POST") {
+    const limit = await consumeLimit("sessionOpen", ip);
+    if (!limit.ok) return limitResponse(res, limit);
+  } else if (req.method === "GET") {
+    const limit = await consumeLimit("sessionPoll", ip);
+    if (!limit.ok) return limitResponse(res, limit);
+  }
   const token = typeof req.body?.token === "string" ? req.body.token
     : typeof req.query?.token === "string" ? String(req.query.token) : "";
 

@@ -42,11 +42,19 @@ Every message is exactly this shape (JSON, UTF-8):
 Validation rules (gateway and connector, both directions):
 
 1. `protocol_version` must be 1; anything else → close 4400.
-2. `message_id` globally unique per sender; duplicates are dropped (replay
-   protection) — durability lives in Postgres, not in the socket.
+2. `message_id` duplicates per authenticated identity are DROPPED silently
+   (idempotent no-op) — enforced by the gateway replay guard (bounded LRU,
+   10k ids/identity). Command execution is additionally idempotent via
+   `command_jobs`.
 3. `expires_at` in the past → reject `message_expired`, never execute.
-4. `sequence` strictly increasing per (sender, server); gaps are reconciled
-   via `resume`, not guessed.
+4. `sequence` is enforced per authenticated identity by the gateway: the
+   baseline is set from the AUTH message's sequence and every later message
+   must be strictly greater. Stale/out-of-order sequence → close 4400
+   `sequence_violation`. The baseline resets on a fresh authenticated
+   connection, so a connector/app restart recovers; a replayed old
+   privileged message on a live connection is rejected, and content-level
+   idempotency (`command_jobs` unique key) covers replays arriving on a new
+   connection.
 5. `payload` schema-validated per `event_type`; unknown event types for
    high-risk classes (`command.*`, `permission.*`) → reject, fail closed.
 6. `correlation_id` ties a response to its request; the originator matches it

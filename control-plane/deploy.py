@@ -36,6 +36,7 @@ FILES = [
     "lib/supabase.ts",
     "lib/enrollments.ts",
     "lib/policies.ts",
+    "lib/ratelimit.ts",
 ]
 
 ENV_VARS = {

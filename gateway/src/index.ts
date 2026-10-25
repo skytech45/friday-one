@@ -15,6 +15,7 @@ import http from "node:http";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { ENVELOPE_BASE, type Envelope } from "./protocol.js";
+import { ReplayGuard } from "./replay.js";
 import {
   findLiveCredential,
   getServerForCredential,
@@ -49,6 +50,8 @@ type Conn = ConnectorConn | AppConn;
 
 const connections = new Set<Conn>();
 const connectorsByServer = new Map<string, ConnectorConn>(); // one live conn per server
+const replayGuard = new ReplayGuard();
+const identities = new Set<string>(); // live replay identities (cleanup marker)
 
 const log = (m: string): void => console.log(`${new Date().toISOString()} ${m}`);
 
@@ -68,6 +71,7 @@ function sendTo(conn: Conn, env: Envelope): void {
 }
 
 function errorClose(socket: WebSocket, code: number, reason: string): void {
+  log(`closing ${code} ${reason}`);
   try {
     socket.close(code, reason);
   } catch {
@@ -277,7 +281,8 @@ wss.on("connection", (socket: WebSocket) => {
     if (!env.success) return errorClose(socket, 4400, "invalid_envelope");
 
     if (!conn) {
-      // First message MUST authenticate.
+      // First message MUST authenticate. The replay guard's baseline is set
+      // from the auth message's sequence; later messages must increase.
       (async () => {
         if (env.data.event_type === "auth.connector") {
           const credential = (env.data.payload as { credential?: string }).credential;
@@ -291,6 +296,12 @@ wss.on("connection", (socket: WebSocket) => {
           conn = { kind: "connector", serverId: server.id, ownerId: server.owner_id, connectorId: cred.id, socket };
           connections.add(conn);
           connectorsByServer.set(server.id, conn);
+          // Replay guard identity: the CONNECTOR credential id (stable across
+          // reconnects for this process, unique per pairing).
+          const identity = `connector:${cred.id}`;
+          identities.add(identity); // marker for cleanup
+          replayGuard.initBaseline(identity, env.data.sequence);
+          (conn as ConnectorConn & { replayIdentity?: string }).replayIdentity = identity;
           sendTo(conn, gatewayEnvelope({
             correlationId: env.data.message_id, serverId: server.id, connectorId: cred.id,
             eventType: "auth.resume.ok",
@@ -304,6 +315,9 @@ wss.on("connection", (socket: WebSocket) => {
           if (!userId) return errorClose(socket, 4403, "invalid_token");
           conn = { kind: "app", userId, socket };
           connections.add(conn);
+          const identity = `app:${userId}`;
+          replayGuard.initBaseline(identity, env.data.sequence);
+          (conn as AppConn & { replayIdentity?: string }).replayIdentity = identity;
           sendTo(conn, gatewayEnvelope({
             correlationId: env.data.message_id, serverId: crypto.randomUUID(), connectorId: null,
             eventType: "auth.resume.ok", payload: { user_id: userId },
@@ -317,6 +331,15 @@ wss.on("connection", (socket: WebSocket) => {
         errorClose(socket, 1011, "auth_failed");
       });
       return;
+    }
+
+    // Replay protection (P0): every authenticated message is checked against
+    // the identity's dedup set and sequence baseline.
+    const replayIdentity = (conn as { replayIdentity?: string }).replayIdentity;
+    if (replayIdentity) {
+      const verdict = replayGuard.check(replayIdentity, env.data.message_id, env.data.sequence);
+      if (verdict === "duplicate") return; // idempotent drop per protocol
+      if (verdict === "stale") return errorClose(socket, 4400, "sequence_violation");
     }
 
     if (conn.kind === "connector") {

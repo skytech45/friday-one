@@ -6,10 +6,13 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { verifyAccessToken } from "../../../lib/auth.js";
 import { createEnrollment } from "../../../lib/enrollments.js";
+import { clientIp, consumeLimit, limitResponse } from "../../../lib/ratelimit.js";
 import { json, fail } from "../../../lib/util.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "POST") return fail(res, 405, "method_not_allowed");
+  const limit = await consumeLimit("enrollCreate", clientIp(req));
+  if (!limit.ok) return limitResponse(res, limit);
   const user = await verifyAccessToken(req.headers.authorization);
   if (!user) return fail(res, 401, "unauthorized");
   const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 120) : "";
