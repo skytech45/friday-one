@@ -710,7 +710,7 @@
         "server/src/seed-owner.ts",
         "server/src/routes/auth.ts"
       ],
-      "description": "The audit log stores { email } in the detail JSON for register and login events, and the owner's email is returned by GET /system/audit. seed-owner.ts also hardcodes the display name Sachin and logs the owner's email and every disabled account's email to stdout.",
+      "description": "The audit log stores { email } in the detail JSON for register and login events, and the owner's email is returned by GET /system/audit. seed-owner.ts also hardcodes the display name [personal name removed] and logs the owner's email and every disabled account's email to stdout.",
       "impact": "Informational. The email is already the account identifier and the log lives on the owner's own host, but it widens the blast radius of a database leak slightly and embeds a personal name in source.",
       "evidence": "Read from the source; the plaintext email was observed in an audit_log row during testing.",
       "remediation_refs": [

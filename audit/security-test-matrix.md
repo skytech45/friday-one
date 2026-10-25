@@ -132,7 +132,7 @@
 | F3 | An unknown route leaks internals | no | `{"message":"Route GET:/… not found","error":"Not Found","statusCode":404}` | **PASS** | — |
 | F4 | A database error leaks its message to the client | no | **`{"statusCode":500,"code":"42501","error":"Internal Server Error","message":"permission denied for table users"}`** | **FAIL** | — |
 | F5 | The owner's email is stored in plaintext in the audit log | no | `{ email }` in the `detail` JSON | **FAIL** | F-26 |
-| F6 | The owner's display name is hardcoded in source | no | `"Sachin"` in `seed-owner.ts:56` | **FAIL** | F-26 |
+| F6 | The owner's display name is hardcoded in source | no | `"[personal name removed]"` in `seed-owner.ts:56` | **FAIL** | F-26 |
 | F7 | An unauthenticated party can write into the owner's console | no | **yes — the report appears in `GET /crash`** | **FAIL** | F-12 |
 | F8 | An oversized crash message is rejected | 400 | 400 | **PASS** | — |
 | F9 | Unlinked crash reports are retained forever | no | no retention policy, no delete endpoint | **FAIL** | F-23 |

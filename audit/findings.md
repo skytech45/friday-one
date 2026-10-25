@@ -1019,7 +1019,7 @@ The document is fetched over plain HTTPS from a fixed gist id, with no signature
 
 **Expected property:** Identity information is not leaked unnecessarily.
 
-**Observed behaviour:** `seed-owner.ts` hardcodes `"Sachin"` as the display name and logs the owner's email address and the email of every disabled account. The audit log stores `{ email }` in the `detail` JSON for register/login events — the owner's email address, in plaintext, in a table that `/system/audit` returns to the client.
+**Observed behaviour:** `seed-owner.ts` hardcodes `"[personal name removed]"` as the display name and logs the owner's email address and the email of every disabled account. The audit log stores `{ email }` in the `detail` JSON for register/login events — the owner's email address, in plaintext, in a table that `/system/audit` returns to the client.
 
 **Impact:** Informational. The email is already the account identifier and the logs are on the owner's own host. It does widen the blast radius of a database leak slightly.
 
