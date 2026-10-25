@@ -1,6 +1,7 @@
 package com.friday.one.feature.cloud
 
 import androidx.compose.foundation.background
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -325,10 +326,50 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
     }
 
     enrollment?.let { info ->
-        // v2 pairing: install command with the one-time token, then the
-        // 16-20 digit code the connector prints on the server terminal.
+        // v2 pairing: install command with the one-time token, then QR/code.
         var codeInput by remember(info.enrollmentId) { mutableStateOf("") }
         var claiming by remember(info.enrollmentId) { mutableStateOf(false) }
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val scope2 = rememberCoroutineScope()
+
+        // Camera permission -> zxing scanner -> parse fridayone://pair?e=&c=
+        val qrLauncher = rememberLauncherForActivityResult(
+            com.journeyapps.barcodescanner.ScanContract(),
+        ) { result ->
+            val contents = result.contents ?: return@rememberLauncherForActivityResult
+            val uri = runCatching { android.net.Uri.parse(contents) }.getOrNull()
+            if (uri?.scheme == "fridayone" && uri.host == "pair") {
+                val scannedCode = uri.getQueryParameter("c") ?: ""
+                val scannedEnrollment = uri.getQueryParameter("e") ?: info.enrollmentId
+                if (scannedCode.length in 16..20) {
+                    claiming = true
+                    scope2.launch {
+                        runCatching {
+                            client.claimEnrollment(session.accessToken, scannedEnrollment, scannedCode)
+                        }.onSuccess {
+                            enrollment = null
+                            reload()
+                        }.onFailure { loadError = it.message; enrollment = null }
+                    }
+                } else {
+                    loadError = "QR did not contain a pairing code"
+                }
+            } else if (contents.length in 16..20 && contents.all(Char::isDigit)) {
+                codeInput = contents
+            }
+        }
+        val scanLauncher = rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            if (granted) qrLauncher.launch(
+                com.journeyapps.barcodescanner.ScanOptions().apply {
+                    setPrompt("Point at the FRIDAY pairing QR")
+                    setBeepEnabled(false)
+                    setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
+                },
+            )
+        }
+
         AlertDialog(
             onDismissRequest = { enrollment = null },
             title = { Text("Pair this server", color = Dash.Text) },
@@ -341,7 +382,15 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
                     )
                     Text("2. Paste the one-time token:", color = Dash.Dim, fontSize = 12.sp)
                     Text(info.token, color = Dash.Accent, fontSize = 11.sp)
-                    Text("3. Terminal shows a 16–20 digit code — enter it:", color = Dash.Dim, fontSize = 12.sp)
+                    Text("3. Scan the QR on the terminal — or type the code:", color = Dash.Dim, fontSize = 12.sp)
+                    Button(
+                        onClick = {
+                            scanLauncher.launch(android.Manifest.permission.CAMERA)
+                        },
+                        enabled = !claiming,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Scan QR") }
+                    Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = codeInput,
                         onValueChange = { codeInput = it.filter(Char::isDigit).take(20) },

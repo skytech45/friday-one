@@ -25,8 +25,8 @@ android {
         applicationId = "com.friday.one"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
         // v2 cloud stack. Publishable key is public by design; authorization
         // is server-side (RLS + control-plane verification).
         val supabaseUrl = (project.findProperty("SUPABASE_URL") as String?)
@@ -101,6 +101,10 @@ dependencies {
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
+    // QR pairing scan (plan v2 §10) — zxing embedded handles camera+decode.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("com.google.zxing:core:3.5.3")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 

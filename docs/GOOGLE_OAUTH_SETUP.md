@@ -27,12 +27,13 @@ exists in Supabase. Nothing in the app needs to change.
 
 ## 3. Recommended while you're there
 
-- **Authentication → Providers → Email**: if you want instant login after
-  registration (no confirmation email), turn OFF "Confirm email". The app
-  handles BOTH cases — with confirmation ON, the register page shows
-  "check your email" instead of signing straight in. Note: the built-in
-  email sender is rate-limited (2/hour) — for real confirmation mail you'd
-  configure SMTP.
+- **KEEP "Confirm email" ON** (owner decision, 2026-10-25: better security).
+  The app handles the confirmation state — the register page shows "check
+  your email" instead of signing straight in, and login is refused until
+  confirmed. One caveat: Supabase's built-in email sender is rate-limited
+  (2/hour) — for reliable confirmation mail configure **SMTP** under
+  Authentication → Email Templates → SMTP settings. Until then, heavy
+  registration bursts will see "email rate limit exceeded" from Supabase.
 
 ## 4. Verify
 
