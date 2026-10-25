@@ -1,9 +1,9 @@
 /**
  * FRIDAY Connector entrypoint.
  *
- * STATUS: pairing + policy gate + gateway client skeleton (Phase 1-4 prep).
- * What is deliberately NOT here yet: adapter runtime (Phase 5), the PTY
- * bridge migration, and the gateway to talk to. See connector/README.md.
+ * STATUS: pairing verified end-to-end; gateway connection LIVE against the
+ * local gateway (Phase 4). What remains for later phases: adapter runtime
+ * (Phase 5, ACP), command execution loop, PTY bridge migration.
  *
  * Security posture: runs as a dedicated unprivileged account; its only
  * secret is its own revocable credential; the policy gate fails closed.
@@ -14,6 +14,9 @@ import { loadPolicy } from "./policy.js";
 import { GatewayConnection } from "./gateway.js";
 
 const CONNECTOR_VERSION = "0.1.0";
+
+/** Identity holder: filled from the gateway's auth.resume.ok (mutable ref). */
+const ids = { serverId: "00000000-0000-0000-0000-000000000000", connectorId: "" };
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -30,21 +33,27 @@ async function main(): Promise<void> {
 
   if (command === "run") {
     const credential = readCredential(cfg.credentialFile);
-    console.log(`connector ${CONNECTOR_VERSION} starting (pairing-only? ${cfg.gatewayUrl ? "no" : "yes"})`);
+    console.log(`connector ${CONNECTOR_VERSION} starting`);
 
     if (cfg.gatewayUrl) {
-      // serverId arrives with the auth handshake response; the placeholder is
-      // replaced when the gateway echoes the bound identity.
       const conn = new GatewayConnection({
         url: cfg.gatewayUrl,
-        serverId: "00000000-0000-0000-0000-000000000000",
-        connectorId: "00000000-0000-0000-0000-000000000000",
+        ids,
         credential: () => readCredential(cfg.credentialFile),
         onMessage: (env) => {
+          if (env.event_type === "auth.resume.ok") {
+            const p = env.payload as { server_id?: string; connector_id?: string };
+            if (typeof p.server_id === "string") ids.serverId = p.server_id;
+            if (typeof p.connector_id === "string") ids.connectorId = p.connector_id;
+            console.log(`gateway accepted us: server=${ids.serverId} connector=${ids.connectorId}`);            return;
+          }
           console.log(`[gateway] inbound: ${env.event_type}`);
         },
+        log: console.log,
       });
       conn.start();
+    } else {
+      console.warn("[config] FRIDAY_GATEWAY_URL not set: running disconnected");
     }
 
     // Policy file presence is a startup assertion: the gate must have

@@ -49,15 +49,15 @@ export function isExpired(env: Envelope, now = Date.now()): boolean {
 }
 
 export function makeEnvelope(fields: {
-  correlationId?: string;
+  correlationId?: string | null;
   serverId: string;
-  connectorId?: string;
-  agentId?: string;
-  sessionId?: string;
+  connectorId?: string | null;
+  agentId?: string | null;
+  sessionId?: string | null;
   eventType: string;
-  expiresAt?: string;
+  expiresAt?: string | null;
   sequence: number;
-  idempotencyKey?: string;
+  idempotencyKey?: string | null;
   payload: unknown;
 }): Envelope {
   return {

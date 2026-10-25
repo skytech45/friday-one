@@ -11,8 +11,12 @@ import { ENVELOPE_BASE, makeEnvelope, type Envelope, isInboundAllowed, isExpired
 
 export interface GatewayOptions {
   url: string;
-  serverId: string;
-  connectorId: string;
+  /**
+   * Mutable identity holder: the server/connector UUIDs are assigned at
+   * pairing and confirmed by the gateway's auth.resume.ok; the caller keeps
+   * this object up to date from inbound messages.
+   */
+  ids: { serverId: string; connectorId: string };
   credential: () => string; // read lazily so rotation just works
   onMessage: (env: Envelope) => void;
   log?: (msg: string) => void;
@@ -67,12 +71,12 @@ export class GatewayConnection {
 
     ws.on("open", () => {
       this.attempts = 0;
-      // First message authenticates; second resumes durable state.
+      // First message authenticates and carries the resume cursor.
       ws.send(
         JSON.stringify(
           makeEnvelope({
-            serverId: this.opts.serverId,
-            connectorId: this.opts.connectorId,
+            serverId: this.opts.ids.serverId,
+            connectorId: this.opts.ids.connectorId || null,
             eventType: "auth.connector",
             sequence: ++this.lastSequence,
             payload: { credential: this.opts.credential(), last_sequence: this.lastSequence },
@@ -84,8 +88,8 @@ export class GatewayConnection {
           ws.send(
             JSON.stringify(
               makeEnvelope({
-                serverId: this.opts.serverId,
-                connectorId: this.opts.connectorId,
+                serverId: this.opts.ids.serverId,
+                connectorId: this.opts.ids.connectorId || null,
                 eventType: "connector.heartbeat",
                 sequence: ++this.lastSequence,
                 payload: { uptime_s: Math.round(process.uptime()) },

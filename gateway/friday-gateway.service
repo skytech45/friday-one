@@ -1,0 +1,32 @@
+[Unit]
+Description=FRIDAY One realtime gateway (WSS hub)
+Documentation=file:/home/ubuntu/friday-one/docs/REALTIME_PROTOCOL.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/friday-one/gateway
+EnvironmentFile=/home/ubuntu/.config/friday-cloud/gateway.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=3
+
+# --- Hardening (matches friday-one-api.service pattern) ---
+# Loopback-only bind (HOST=127.0.0.1); TLS termination belongs to the tunnel
+# once remote connectors exist. For now the only connector runs on this host.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=512M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
