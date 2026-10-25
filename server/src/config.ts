@@ -53,6 +53,7 @@ export interface ServerConfig {
 /** The names that are scrubbed from process.env once they are captured. */
 const SECRET_ENV_NAMES = [
   "DATABASE_URL",
+  "MIGRATE_DATABASE_URL",
   "JWT_SECRET",
   "FINGERPRINT_PEPPER",
   "FRIDAY_OWNER_PASSWORD",
