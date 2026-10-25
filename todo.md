@@ -1,7 +1,7 @@
 # FRIDAY One — Remaining Work
 
 **Last updated:** 2026-10-25
-**State:** 5 findings open, plus RR-05 (shared host); RR-09 mitigated
+**State:** 4 findings open, plus RR-05 (shared host); RR-09 mitigated
 **Rule:** each item ships with a regression test and is re-executed before it is
 called done. A fix that has only been described is not a fix.
 
@@ -90,7 +90,7 @@ and the terminal still runs as `ubuntu`, so `HOME` redirection is not a boundary
 
 | # | Finding | Action |
 |---|---|---|
-| 4 | **F-20** | **Local gate live; Actions pending owner billing fix:** `scripts/ci.sh` (audit, typecheck, unit, F-09, e2e, vendor hashes) runs as the pre-push hook on the deployment host, and `.github/workflows/ci.yml` (incl. the Android test job) is committed. GitHub Actions refused to run on `skytech45` (billing). Repos are being transferred to `skyedu-ai`; once the transfer is accepted, the workflow runs on push. |
+| 4 | **F-20** | **DONE 2026-10-25.** `friday-one` is public (owner's choice), so Actions minutes are unlimited: the pipeline runs green on every push — audit, typecheck, 20 unit tests, Android test job, gitleaks, and the full 74-check e2e + F-09 suite against a real `postgres:16-alpine`. `scripts/ci.sh` also gates every push locally via the pre-push hook. (An earlier transfer to a second GitHub account failed server-side and is moot — CI works without it.) |
 | 5 | F-23 | Retention policy for unlinked crash reports and a delete endpoint. Unlinked reports are never served now (F-12 is done), but they still accumulate unbounded. |
 
 ---
