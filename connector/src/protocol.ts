@@ -26,6 +26,7 @@ export type Envelope = z.infer<typeof ENVELOPE_BASE>;
 /** Event types the CONNECTOR may receive. Anything not listed → reject. */
 export const CONNECTOR_INBOUND = [
   "auth.resume.ok",
+  "command.dispatch",
   "permission.decided",
   "command.cancel",
   "policy.update",

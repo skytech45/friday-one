@@ -118,6 +118,13 @@ async function handleConnectorMessage(conn: ConnectorConn, env: Envelope): Promi
       forwardToOwnerApps(conn.ownerId, env);
       return;
     }
+    // Streaming agent output: forwarded to the owner's app connections as-is
+    // (bounded per message by MAX_PAYLOAD; the connector backpressures).
+    case "chat.delta":
+    case "session.updated": {
+      forwardToOwnerApps(conn.ownerId, env);
+      return;
+    }
     case "command.completed":
     case "command.failed": {
       const jobId = (env.payload as { job_id?: string }).job_id;

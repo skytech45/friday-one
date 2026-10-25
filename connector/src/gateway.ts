@@ -47,6 +47,20 @@ export class GatewayConnection {
     }
   }
 
+  /** Build + send an outbound envelope with the next sequence number. */
+  emit(eventType: string, payload: unknown, correlationId?: string): void {
+    this.send(
+      makeEnvelope({
+        serverId: this.opts.ids.serverId,
+        connectorId: this.opts.ids.connectorId || null,
+        eventType,
+        sequence: ++this.lastSequence,
+        correlationId: correlationId ?? null,
+        payload,
+      }),
+    );
+  }
+
   start(): void {
     this.stopped = false;
     this.connect();

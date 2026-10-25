@@ -34,6 +34,17 @@ export class GatewayConnection {
                 this.pending.shift(); // bounded
         }
     }
+    /** Build + send an outbound envelope with the next sequence number. */
+    emit(eventType, payload, correlationId) {
+        this.send(makeEnvelope({
+            serverId: this.opts.ids.serverId,
+            connectorId: this.opts.ids.connectorId || null,
+            eventType,
+            sequence: ++this.lastSequence,
+            correlationId: correlationId ?? null,
+            payload,
+        }));
+    }
     start() {
         this.stopped = false;
         this.connect();
