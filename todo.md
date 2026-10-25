@@ -59,9 +59,10 @@ churn constantly and pinning gets disabled "temporarily" and never restored.
   the script exits early and says so if the zone is not delegated.
 - Then: bake `https://friday.knistudio.in` into the APK as `FRIDAY_BASE_URL` and
   drop the gist fetch from startup (or keep it only as a signed fallback).
-- Current state: the published quick-tunnel URL returns **HTTP 530**, and
-  `friday-one-api.service` / `friday-one-tunnel.service` are **not installed**
-  (`systemctl` reports `not-found`). Nothing is deployed.
+- Current state (updated 2026-10-25): the API and tunnel units **are installed
+  and live** — the app reaches the backend through the quick-tunnel URL
+  published to the discovery gist. The named tunnel still needs the DNS
+  delegation for pins to be meaningful (2a below).
 
 **2b. F-01 — wire what already exists**
 
@@ -117,7 +118,7 @@ and the terminal still runs as `ubuntu`, so `HOME` redirection is not a boundary
 
 | # | Finding | Action |
 |---|---|---|
-| 5 | **F-20** | CI pipeline: `npm ci`, `npm audit --audit-level=high`, `tsc --noEmit`, the unit suite, `gitleaks`, Android lint + unit tests, and an `apksigner` release-signature assertion. Run `audit/audit-e2e.mjs` as an integration job — it is self-cleaning. |
+| 5 | **F-20** | **Mostly done 2026-10-25:** `scripts/ci.sh` runs the full gate (audit, typecheck, unit, F-09, e2e) as a versioned pre-push hook on the deployment host, and `.github/workflows/ci.yml` is committed — but GitHub Actions is blocked on an account billing issue (owner action: fix billing/spending limit, then the workflow runs on push). |
 | 6 | **F-15** | Android tests. JVM: `DeviceIdentity` fingerprint stability, `CertificatePinning` loopback/apply decision, `SessionStore.isExpiring` boundaries, `jsString` escaping. Instrumented: biometric gate, WebView origin policy. `junit` is declared and unused today; there are no `src/test` or `src/androidTest` directories at all. |
 | 7 | **F-17** | Resource limits: cap concurrent terminal sessions, add a per-connection output budget, use `socket.pause()/resume()` for backpressure, and add `MemoryMax=` / `TasksMax=` to the systemd unit. |
 | 8 | **F-21** | Record the vendored `xterm.js` version and SHA-256 in `assets/terminal/THIRD-PARTY.md`, add a CI hash check, and ship or strip the `sourceMappingURL` comment (the map is absent). |
@@ -133,15 +134,14 @@ and the terminal still runs as `ubuntu`, so `HOME` redirection is not a boundary
 Both are in [`audit/residual-risk-register.md`](audit/residual-risk-register.md)
 and neither will show up as an incident until the day it matters.
 
-### RR-09 · No backup, no restore, no history
+### RR-09 · No backup, no restore, no history — **MITIGATED 2026-10-25**
 
-There is version control now, but no off-host remote, no `pg_dump` schedule, and
-no evidence that a restore has ever been performed. A bad migration or a disk
-failure is currently unrecoverable.
-
-**Do:** add an off-host git remote; schedule a nightly `pg_dump` to off-host
-storage; **restore it once and prove it works.** A backup that has never been
-restored is a hypothesis.
+Done: off-host git remote (private `skytech45/friday-one`, deploy-key scoped),
+nightly `pg_dump -Fc` pushed to a second private repo
+(`skytech45/friday-one-backups`) with full git-history retention, a 04:35
+systemd timer (`friday-one-backup.timer`), and a **restore drill that passed**
+(6 tables / 3 users / 3 devices verified from the dump). Remaining: snapshot
+the Postgres volume before every migration (manual, Phase 1+ discipline).
 
 ### RR-05 · The control plane shares a host with other services
 

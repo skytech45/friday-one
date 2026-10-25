@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-25
 **Scope:** security remediation, P0 and P1 batches
-**State:** 9 commits, 3 tags, working tree clean, all suites green
+**State:** 13 commits, 3 tags, working tree clean, all suites green
 
 This file records what has actually been **built, executed and verified**.
 Anything not listed here is still open — see [`todo.md`](todo.md).
@@ -38,6 +38,8 @@ Every number below comes from a real run, not an estimate.
 | `b16d755` | — | `/system` telemetry gated on device trust (F-13) |
 | `60e5b1f` | — | `@fastify/jwt` 10.2.5 / `fast-jwt` 6.3.5, `zod` 4.6.7 (F-11 remainder) |
 | `5dfdb00` | — | Unlinked crash reports hidden from the console, writes sanitised (F-12) |
+| `a80cdf0` | — | Phase 0 baseline audit for the upgrade plan |
+| `55afa21` | — | Pre-1 batch: deployment restored, off-host backups (RR-09), CI (F-20) |
 
 ---
 
@@ -227,6 +229,62 @@ remediation batch (algorithms pinned, `crit` rejected, array payloads rejected,
   are tracked.
 - **Verified:** `git status --porcelain` is clean; no production secret is staged
   (checked by grepping the staged set for the real DB password and JWT secret).
+
+---
+
+## Pre-1 batch — deployment, backups, CI (2026-10-25)
+
+Recorded because the upgrade plan's Phase 0 (`docs/BASELINE_AUDIT.md`, B-7)
+identified them as blocking everything else.
+
+### Deployment restored — **verified live**
+
+- `friday-one-api.service` + `friday-one-tunnel.service` installed, enabled and
+  healthy; the API answers through the Cloudflare quick tunnel, **verified from
+  an external vantage point** (`GET /health` → `{"ok":true,"version":"0.1.0"}`).
+- Three deployment defects found and fixed along the way:
+  1. **Stale endpoint pipeline:** the tunnel unit never wrote
+     `/tmp/cf-tunnel.log` (no redirect) *and* had `PrivateTmp=true`, so the
+     endpoint publisher grepped a file left over from the Oct-23 manual run and
+     published a dead URL to the gist. Fix: `tunnel.sh` redirects stderr to
+     `logs/cf-tunnel.log`, the unit opens exactly that path via
+     `ReadWritePaths` (note: `ProtectSystem=strict` makes `/tmp` read-only, and
+     `PrivateTmp` would hide it — the log must live under the repo), and
+     `publish-endpoint.sh` reads the same path.
+  2. **`gh gist edit -f` is a rename flag, not a content flag** — the publisher
+     had never actually been able to update the gist content that way.
+  3. **`PORT=8788` in `server/.env`** disagreed with the tunnel target (8787) —
+     and a stale process on 8787 had been answering health checks, masking it.
+- **`hermes` terminal kind fixed:** the binary lives in `~/.local/bin`, outside
+  the terminal child's PATH; the COMMANDS allowlist now uses an absolute path.
+- Stray `</content>` artifact lines (a repeat of the incident documented in
+  `docs/SHARED.md`) removed from `run-server.sh`, `friday-one-api.service`
+  (line 39 was tripping the systemd parser) and two docs files.
+
+### RR-09 · Off-host backups — **mitigated, restore drilled**
+
+- Off-host git remote: private `github.com/skytech45/friday-one`, pushed via a
+  write-scoped **deploy key** (only this repo, revocable from GitHub settings).
+- Nightly database backup: `scripts/nightly-backup.sh` dumps with
+  `pg_dump -Fc` inside the container and pushes to a second private repo
+  (`skytech45/friday-one-backups`); every nightly dump is a commit (git history
+  = retention), the working tree keeps the last 14.
+- `friday-one-backup.timer` runs it daily at 04:35 (Persistent).
+- **Restore drill PASSED:** the dump was restored into a scratch database —
+  6 tables, 3 users, 3 devices verified — then dropped. This is the tested
+  rollback path the risk register demanded.
+
+### F-20 · CI — **local gate live; Actions pending owner billing fix**
+
+- `scripts/ci.sh` runs the full gate: `npm audit --omit=dev`, typecheck,
+  20/20 unit, `audit-f09` 16/16, e2e 71/71. Installed as a **versioned
+  pre-push hook** (`core.hooksPath=scripts/hooks`) on the deployment host —
+  nothing leaves the box without the suite passing.
+- `.github/workflows/ci.yml` is committed (audit/typecheck/unit job, e2e +
+  F-09 job against a real `postgres:16-alpine`, gitleaks) — GitHub Actions
+  refused to start it: **account billing issue** ("payments have failed or
+  spending limit needs increasing"). Owner action; the workflow runs on the
+  next push once fixed.
 
 ---
 

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Pre-push hook: run the full CI gate before anything leaves this machine.
+# Installed repo-wide via: git config core.hooksPath scripts/hooks
+exec "$(dirname "$0")/../ci.sh"
