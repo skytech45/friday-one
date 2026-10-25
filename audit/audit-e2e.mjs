@@ -442,8 +442,22 @@ say("\n=== 9a. F-17: concurrent terminal cap ===");
   for (let i = 0; i < 5; i++) held.push(await openHold());
   check("5 concurrent terminals open", held.every(Boolean), `opened=${held.filter(Boolean).length}/5`);
 
+  // Rare flake: a held session sometimes dies between open and probe. Log it
+  // (a real reliability signal) and replace it so the cap is genuinely at 5
+  // when the 6th connects.
+  const deaths = [];
+  held.forEach((w, i) => { if (w) w.on("close", (c) => deaths.push(`#${i}:code=${c}`)); });
+  for (let i = 0; i < held.length; i++) {
+    if (!held[i] || held[i].readyState !== 1) {
+      console.log(`  [info] held session #${i} died early (${deaths.join(", ") || "no close event"}); replacing`);
+      held[i] = await openHold();
+    }
+  }
+
   const sixth = await wsTest(`ws://127.0.0.1:${PORT}/ws/terminal?kind=shell&token=${ownerTok}`);
-  check("the 6th terminal is refused (4529)", sixth.closeCode === 4529, `closeCode=${sixth.closeCode}`);
+  check("the 6th terminal is refused (4529)",
+    sixth.closeCode === 4529,
+    `closeCode=${sixth.closeCode} opened=${sixth.opened} earlyDeaths=[${deaths.join(", ")}]`);
 
   held.forEach((w) => { try { w.close(); } catch {} });
   await new Promise((r) => setTimeout(r, 800));

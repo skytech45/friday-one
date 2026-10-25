@@ -1,5 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { assertTokenClaims, assertNoCritHeader } from "../tokenClaims.js";
 import { isRevoked } from "../revocation.js";
 import { childEnv, config } from "../config.js";
@@ -118,7 +122,13 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
       const sized = `stty rows ${rows} cols ${cols} 2>/dev/null; exec ${spec.cmd}`;
       // The working directory doubles as the child's HOME, so the terminal
       // does not run in the owner's home where .hermes and .ssh live.
-      const cwd = config.terminalCwd;
+      // If the configured cwd does not exist (e.g. a fresh CI container),
+      // fall back to a private temp dir rather than failing the spawn.
+      let cwd = config.terminalCwd;
+      if (!existsSync(cwd)) {
+        cwd = await mkdtemp(join(tmpdir(), "friday-term-"));
+        req.log.warn({ configured: config.terminalCwd, using: cwd }, "TERMINAL_CWD missing; using temp dir");
+      }
       const child: ChildProcessWithoutNullStreams = spawn(
         "script",
         ["-qfc", sized, "/dev/null"],
@@ -138,6 +148,15 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
       );
 
       req.log.info({ kind: q.kind, pid: child.pid }, "terminal opened");
+
+      // A spawn failure (binary missing, cwd gone) emits 'error' ASYNCHRONOUSLY
+      // — and an unhandled 'error' event on a child process is an uncaught
+      // exception that kills the whole server. Handle it.
+      child.on("error", (err) => {
+        req.log.error({ err: err.message, kind: q.kind }, "terminal spawn failed");
+        stop();
+        if (socket.readyState === socket.OPEN) socket.close(1011, "spawn_failed");
+      });
 
       let closed = false;
       let idleTimer: ReturnType<typeof setInterval> | null = null;
