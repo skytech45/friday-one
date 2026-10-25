@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.friday.one.data.*
+import com.friday.one.feature.cloud.CloudScreen
 import com.friday.one.feature.terminal.TerminalScreen
 import com.friday.one.security.DeviceIdentity
 import com.friday.one.ui.components.Dash
@@ -55,11 +56,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         session = SessionStore(applicationContext)
+        val cloudAuth = com.friday.one.data.SupabaseAuth(applicationContext)
 
         setContent {
             FridayOneTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    AppRoot(this, session)
+                    AppRoot(this, session, cloudAuth)
                 }
             }
         }
@@ -68,6 +70,7 @@ class MainActivity : ComponentActivity() {
 
 private sealed interface Screen {
     data object Machine : Screen
+    data object Cloud : Screen
     data object Files : Screen
     data object Hermes : Screen
     data object OpenCode : Screen
@@ -75,7 +78,7 @@ private sealed interface Screen {
 }
 
 @Composable
-private fun AppRoot(activity: ComponentActivity, session: SessionStore) {
+private fun AppRoot(activity: ComponentActivity, session: SessionStore, cloudAuth: com.friday.one.data.SupabaseAuth) {
     var loggedIn by remember { mutableStateOf<Boolean?>(null) }
     var screen by remember { mutableStateOf<Screen>(Screen.Machine) }
     var baseUrl by remember { mutableStateOf(BuildConfig.BASE_URL) }
@@ -113,9 +116,9 @@ private fun AppRoot(activity: ComponentActivity, session: SessionStore) {
             bottomBar = {
                 NavigationBar {
                     val items = listOf(
+                        Triple(Screen.Cloud, "Cloud", Icons.Outlined.Cloud),
                         Triple(Screen.Machine, "Machine", Icons.Outlined.Memory),
                         Triple(Screen.Files, "Files", Icons.Outlined.Folder),
-                        Triple(Screen.Hermes, "Hermes", Icons.Outlined.Terminal),
                         Triple(Screen.OpenCode, "Code", Icons.Outlined.Code),
                         Triple(Screen.Settings, "Settings", Icons.Outlined.Settings),
                     )
@@ -132,6 +135,7 @@ private fun AppRoot(activity: ComponentActivity, session: SessionStore) {
         ) { padding ->
             Box(Modifier.padding(padding)) {
                 when (val s = screen) {
+                    Screen.Cloud -> CloudScreen(cloudAuth)
                     Screen.Machine -> MachineScreen(session, baseUrl)
                     Screen.Files -> FilesScreen(session, baseUrl)
                     Screen.Hermes -> TerminalScreen(session, baseUrl, "hermes", "Hermes TUI")

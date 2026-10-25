@@ -8,7 +8,7 @@ import { env } from "./env.js";
 
 const REST = `${env.supabaseUrl}/rest/v1`;
 
-async function rest<T>(
+export async function rest<T>(
   method: string,
   path: string,
   opts: { body?: unknown; prefer?: string; query?: Record<string, string> } = {},

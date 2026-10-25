@@ -20,6 +20,7 @@ FILES = [
     "package.json",
     "vercel.json",
     "api/v1/health.ts",
+    "api/v1/servers/index.ts",
     "api/v1/servers/enrollments.ts",
     "api/v1/servers/enrollments/redeem.ts",
     "lib/env.ts",

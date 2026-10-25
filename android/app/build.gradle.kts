@@ -26,14 +26,28 @@ android {
         applicationId = "com.friday.one"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The console host is injected at build time so the APK is not tied to
         // one tunnel URL. Override with -PFRIDAY_BASE_URL=https://...
         val baseUrl = (project.findProperty("FRIDAY_BASE_URL") as String?)
             ?: "http://127.0.0.1:8788"
         buildConfigField("String", "BASE_URL", "\"$baseUrl\"")
+        // Phase 1-4 cloud stack. The publishable key is public by design; the
+        // gateway URL churns with the quick tunnel until the named tunnel lands.
+        val supabaseUrl = (project.findProperty("SUPABASE_URL") as String?)
+            ?: "https://tbysxnyuipjwutqxtxvy.supabase.co"
+        val supabaseKey = (project.findProperty("SUPABASE_PUBLISHABLE_KEY") as String?)
+            ?: "sb_publishable_cbDZTC7O2OVsHpolFzqL1w_zcshNmMP"
+        val controlPlaneUrl = (project.findProperty("CONTROL_PLANE_URL") as String?)
+            ?: "https://friday-one-control-plane-cotts1-2550.vercel.app"
+        val gatewayUrl = (project.findProperty("GATEWAY_URL") as String?)
+            ?: "wss://rugs-ada-legislature-literacy.trycloudflare.com"
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"$supabaseKey\"")
+        buildConfigField("String", "CONTROL_PLANE_URL", "\"$controlPlaneUrl\"")
+        buildConfigField("String", "GATEWAY_URL", "\"$gatewayUrl\"")
     }
 
     signingConfigs {

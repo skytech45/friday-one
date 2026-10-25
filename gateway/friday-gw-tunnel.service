@@ -1,0 +1,26 @@
+[Unit]
+Description=FRIDAY One gateway quick tunnel (WSS exposure)
+After=friday-gateway.service network-online.target
+Wants=network-online.target
+Requires=friday-gateway.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/friday-one
+ExecStart=/home/ubuntu/friday-one/scripts/gw-tunnel.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/friday-one/logs
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
