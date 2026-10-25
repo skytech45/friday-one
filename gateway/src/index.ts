@@ -31,6 +31,28 @@ import {
 const PORT = Number(process.env.PORT ?? 8790);
 const HOST = process.env.HOST ?? "127.0.0.1"; // loopback; TLS via tunnel/reverse proxy
 const MAX_PAYLOAD = 1_048_576; // 1 MiB per message
+
+// Fail fast on missing security-critical env (P2): a gateway that cannot
+// authenticate its principals must not boot.
+for (const name of ["SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_JWKS_URL"]) {
+  if (!process.env[name]) {
+    console.error(`missing required env: ${name} — refusing to start`);
+    process.exit(1);
+  }
+}
+
+// Dead-connector sweep (P2): a connector whose socket is open but silent for
+// 90 s (6 missed 15 s heartbeats) is terminated — half-open TCP must not
+// masquerade as an online server.
+const CONNECTOR_IDLE_MS = Number(process.env.CONNECTOR_IDLE_MS ?? 90_000);
+setInterval(() => {
+  for (const c of connectorsByServer.values()) {
+    if (Date.now() - c.lastSeenMs > CONNECTOR_IDLE_MS) {
+      log(`idle connector swept: server=${c.serverId}`);
+      try { c.socket.terminate(); } catch { /* already gone */ }
+    }
+  }
+}, 15_000);
 const SUPABASE_URL = process.env.SUPABASE_URL!.replace(/\/$/, "");
 const JWKS = createRemoteJWKSet(new URL(process.env.SUPABASE_JWKS_URL!));
 
@@ -40,6 +62,7 @@ interface ConnectorConn {
   ownerId: string;
   connectorId: string;
   socket: WebSocket;
+  lastSeenMs: number; // updated on any authenticated message (idle sweep)
 }
 interface AppConn {
   kind: "app";
@@ -108,6 +131,7 @@ function gatewayEnvelope(fields: {
 async function handleConnectorMessage(conn: ConnectorConn, env: Envelope): Promise<void> {
   switch (env.event_type) {
     case "connector.heartbeat": {
+      conn.lastSeenMs = Date.now();
       await touchLastSeen(conn.serverId);
       return;
     }
@@ -222,6 +246,23 @@ async function handleAppMessage(conn: AppConn, env: Envelope): Promise<void> {
       sendTo(connector, dispatch);
       return;
     }
+    case "command.cancel": {
+      const jobId = (env.payload as { job_id?: string }).job_id;
+      if (typeof jobId !== "string") return;
+      // Ownership: only the job's server owner may cancel, and the job must
+      // be in a cancellable state (queued/dispatched/accepted/started).
+      const job = await findQueuedJob(jobId);
+      if (!job) return;
+      const connector = connectorsByServer.get(job.server_id);
+      if (!connector || connector.ownerId !== conn.userId) return;
+      await setJobState(jobId, "cancelled");
+      sendTo(connector, gatewayEnvelope({
+        correlationId: env.message_id, serverId: job.server_id, connectorId: connector.connectorId,
+        eventType: "command.cancel",
+        payload: { job_id: jobId },
+      }));
+      return;
+    }
     case "permission.decided": {
       const p = env.payload as { request_id?: string; decision?: string };
       if (typeof p.request_id !== "string" || (p.decision !== "allow" && p.decision !== "deny")) return;
@@ -293,7 +334,7 @@ wss.on("connection", (socket: WebSocket) => {
           if (!server) return errorClose(socket, 4403, "server_not_active");
           const existing = connectorsByServer.get(server.id);
           if (existing) existing.socket.close(4529, "superseded");
-          conn = { kind: "connector", serverId: server.id, ownerId: server.owner_id, connectorId: cred.id, socket };
+          conn = { kind: "connector", serverId: server.id, ownerId: server.owner_id, connectorId: cred.id, socket, lastSeenMs: Date.now() };
           connections.add(conn);
           connectorsByServer.set(server.id, conn);
           // Replay guard identity: the CONNECTOR credential id (stable across

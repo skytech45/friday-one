@@ -28,7 +28,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     const server = servers[0];
     if (!server || server.enrollment_state !== "active") return fail(res, 403, "server_not_active");
     const rules = await syncRulesFor(cred.server_id, server.owner_id);
-    json(res, 200, { version: Date.now(), server_id: cred.server_id, rules });
+    // Rotation signal: if the server's current credential pointer does not
+    // match THIS credential (including a null pointer after an owner rotate
+    // trigger), the connector must complete rotation before grace closes.
+    const serverRows = await rest<{ connector_id: string | null }>("GET", "servers", {
+      query: { id: `eq.${cred.server_id}`, select: "connector_id" },
+    });
+    const rotationDue = serverRows[0]?.connector_id !== cred.id;
+    json(res, 200, {
+      version: Date.now(),
+      server_id: cred.server_id,
+      rules,
+      rotation_due: rotationDue,
+    });
   } catch {
     fail(res, 500, "sync_failed");
   }

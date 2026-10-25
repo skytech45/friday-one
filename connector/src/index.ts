@@ -10,10 +10,12 @@
  * gate immediately before execution — fail closed.
  */
 import { loadConfig, readCredential } from "./config.js";
+import { installCredential } from "./pairing.js";
 import { enroll } from "./enroll.js";
 import { decide } from "./policy.js";
 import { AcpAgent } from "./acp.js";
 import { GatewayConnection } from "./gateway.js";
+import { createHash, randomBytes } from "node:crypto";
 
 const CONNECTOR_VERSION = "0.1.0";
 
@@ -22,6 +24,51 @@ const ids = { serverId: "00000000-0000-0000-0000-000000000000", connectorId: "" 
 
 let agent: AcpAgent | null = null;
 let conn: GatewayConnection | null = null;
+/** Live job → ACP session map so command.cancel can kill the right session. */
+const liveJobs = new Map<string, string>(); // jobId -> acp sessionId
+
+/** SHA-256 hex of a string (for the rotation handshake). */
+function sha256hex(v: string): string {
+  return createHash("sha256").update(v).digest("hex");
+}
+
+/**
+ * Credential rotation (plan §8): the control plane signals `rotation_due`
+ * via policy sync; the connector generates a NEW random secret locally and
+ * submits ONLY its hash. On ack it swaps the credential file atomically —
+ * the old credential stays valid for the server-side grace window, so
+ * in-flight dispatches finish.
+ */
+async function maybeRotate(cfg: ReturnType<typeof loadConfig>): Promise<void> {
+  try {
+    const current = readCredential(cfg.credentialFile);
+    const sync = await fetch(`${cfg.controlPlaneUrl}/api/v1/policies/sync`, {
+      headers: { "x-connector-credential": current },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!sync.ok) return;
+    const body = (await sync.json()) as { rotation_due?: boolean };
+    if (!body.rotation_due) return;
+    console.log("rotation due: generating new credential");
+    const next = randomBytes(32).toString("base64url");
+    const commit = await fetch(`${cfg.controlPlaneUrl}/api/v1/connector/rotate-credential`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-connector-credential": current },
+      body: JSON.stringify({ new_credential_hash: sha256hex(next) }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!commit.ok) {
+      console.error(`rotation commit failed (${commit.status}); will retry on next sync`);
+      return;
+    }
+    installCredential(cfg.credentialFile, next);
+    console.log("credential rotated ✓ (old one expires server-side after grace)");
+    // Force an immediate reconnect with the new credential.
+    process.kill(process.pid, "SIGTERM");
+  } catch (e) {
+    console.error(`rotation check failed: ${(e as Error).message}`);
+  }
+}
 
 /** Lazily start ONE ACP agent (hermes first — verified on this host). */
 async function getAgent(cfg: ReturnType<typeof loadConfig>): Promise<AcpAgent> {
@@ -94,21 +141,26 @@ async function handleDispatch(
   try {
     const a = await getAgent(cfg);
     const sessionId = await a.newSession(root);
+    liveJobs.set(jobId, sessionId);
     let deltaSeq = 0;
-    const result = await a.prompt(sessionId, prompt, (delta) => {
-      deltaSeq += 1;
+    try {
+      const result = await a.prompt(sessionId, prompt, (delta) => {
+        deltaSeq += 1;
+        conn!.emit(
+          "chat.delta",
+          { job_id: jobId, session_id: sessionId, delta, seq: deltaSeq },
+          env.message_id,
+        );
+      });
       conn!.emit(
-        "chat.delta",
-        { job_id: jobId, session_id: sessionId, delta, seq: deltaSeq },
+        "command.completed",
+        { job_id: jobId, result_summary: { stopReason: result.stopReason, session_id: sessionId } },
         env.message_id,
       );
-    });
-    conn!.emit(
-      "command.completed",
-      { job_id: jobId, result_summary: { stopReason: result.stopReason, session_id: sessionId } },
-      env.message_id,
-    );
-    console.log(`job ${jobId} completed (${deltaSeq} deltas, stop=${result.stopReason})`);
+      console.log(`job ${jobId} completed (${deltaSeq} deltas, stop=${result.stopReason})`);
+    } finally {
+      liveJobs.delete(jobId);
+    }
   } catch (err) {
     console.error(`job ${jobId} failed:`, err instanceof Error ? err.message : err);
     conn!.emit("command.failed", { job_id: jobId, reason: "execution_failed" }, env.message_id);
@@ -148,6 +200,17 @@ async function main(): Promise<void> {
             void handleDispatch(cfg, env).catch((e) => console.error("dispatch error:", e.message));
             return;
           }
+          if (env.event_type === "command.cancel") {
+            const jobId = (env.payload as { job_id?: string }).job_id ?? "";
+            const sessionId = liveJobs.get(jobId);
+            if (agent && sessionId) {
+              agent.cancel(sessionId); // ACP session/cancel — prompt rejects, job exits
+              console.log(`cancel: job ${jobId.slice(0, 8)} session ${sessionId.slice(0, 10)}`);
+            } else {
+              console.log(`cancel: job ${jobId.slice(0, 8)} not live (already finished)`);
+            }
+            return;
+          }
           console.log(`[gateway] inbound: ${env.event_type}`);
         },
         log: console.log,
@@ -157,9 +220,10 @@ async function main(): Promise<void> {
       console.warn("[config] FRIDAY_GATEWAY_URL not set: running disconnected");
     }
 
-    // Policy is REMOTE now (fetched per-dispatch, fail closed). The local
-    // policyDir remains only as boot diagnostics for offline debugging.
-    console.log("policy mode: remote sync per dispatch (fail closed)");
+    // Policy is REMOTE (per-dispatch, fail closed); the same sync response
+    // carries the rotation-due signal — checked on boot and every 60 s.
+    void maybeRotate(cfg);
+    setInterval(() => { void maybeRotate(cfg); }, 60_000);
     return;
   }
 

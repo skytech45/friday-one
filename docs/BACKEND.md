@@ -24,6 +24,14 @@
 6. **Android (v0.6.0, versionCode 6, signed)**: Supabase email+password login + register page (email-confirmation state handled), Google OAuth fully wired (PKCE + `fridayone://auth-callback` deep link — activates when owner enables the provider), server dashboard (online states), Add Server → install command + token + **QR scan (zxing) or numeric claim**, live agent chat with streaming deltas + inline permission allow/deny, Security screen (policy editor with toggles/delete + add dialog, job history, audit trail, server revoke with confirm).
 7. **P0 security hardening (live-tested):** per-IP rate limiting on all pairing routes (shared Supabase fixed-window RPC; Vercel-edge-header IP only; spoofed x-forwarded-for can't bypass; fail-closed 503; env-tunable RL_*); gateway replay protection. Verified: 10×201→429+Retry-After, spoof-no-bypass, dup dropped, stale 4400, valid flow streams end-to-end.
 
+8. **P1 hardening batch (2026-10-25, live-tested):**
+   - **Credential rotation** (hash-only design): owner `POST /servers/:id/rotate` → connector's sync sees `rotation_due` → connector generates a NEW secret locally, submits only its SHA-256 to `/api/v1/connector/rotate-credential` → server re-points, old credential grace-expires (10 min default, DB-verified). Plaintext never leaves the connector. **Verified live:** trigger → auto-rotate → file swap → reconnect on the new credential; old row expiring in DB.
+   - **command.cancel end-to-end:** app → gateway (ownership + state check, job set `cancelled`) → connector live-session map → ACP `session/cancel` → stopReason `cancelled`. **Verified live** mid-prompt.
+   - **ACP output budget** (P2): per-prompt byte cap (default 1 MiB, `ACP_MAX_STREAM_BYTES`); past the cap the session is cancelled and the job fails bounded.
+   - **Gateway hardening** (P2): fail-fast env validation at boot; idle-connector sweep (90 s silent → terminate, `CONNECTOR_IDLE_MS`).
+   - **Route consolidation** for the Vercel Hobby 12-function cap: `servers/[id]/[action]` (revoke|rotate), `connector/[action]` (rotate-credential).
+
+
 ## Key live-test evidence (commands in git history / audit doc)
 
 - Pairing E2E incl. wrong-code 403, no-auth 401, replay 403, one-time pickup

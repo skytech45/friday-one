@@ -178,17 +178,28 @@ export class AcpAgent {
   /**
    * Run one prompt turn. Streaming deltas arrive via onDelta (agent_message_chunk
    * updates); resolves when the agent replies with a stopReason.
+   *
+   * Output budget (P2): per-prompt streamed bytes are capped (default 1 MiB).
+   * Past the cap the session is cancelled and the prompt rejects — bounded
+   * output beats a flooded gateway every time.
    */
   async prompt(
     sessionId: string,
     text: string,
     onDelta: (delta: string) => void,
+    maxStreamBytes = Number(process.env.ACP_MAX_STREAM_BYTES ?? 1_048_576),
   ): Promise<{ stopReason: string }> {
+    let streamed = 0;
     this.handlers.set(sessionId, (msg) => {
       if (msg.method !== "session/update") return;
       const params = msg.params as { update?: { sessionUpdate?: string; content?: { text?: string } } };
       const update = params.update;
       if (update?.sessionUpdate === "agent_message_chunk" && typeof update.content?.text === "string") {
+        streamed += Buffer.byteLength(update.content.text, "utf8");
+        if (streamed > maxStreamBytes) {
+          this.cancel(sessionId);
+          return;
+        }
         onDelta(update.content.text);
       }
       // Unknown update kinds are ignored deliberately — the contract says
@@ -200,6 +211,9 @@ export class AcpAgent {
         { sessionId, prompt: [{ type: "text", text }] },
         120_000,
       )) as { stopReason: string };
+      if (streamed > maxStreamBytes) {
+        throw new Error(`output budget exceeded (${streamed} > ${maxStreamBytes} bytes)`);
+      }
       return { stopReason: result.stopReason };
     } finally {
       this.handlers.delete(sessionId);
