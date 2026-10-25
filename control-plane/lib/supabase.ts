@@ -90,7 +90,7 @@ export async function insertPairingCode(serverId: string, ttlSeconds: number): P
 export async function consumePairingCode(code: string): Promise<PairingCodeRow | null> {
   const codeHash = sha256hex(code);
   const now = new Date().toISOString();
-  const rows = await rest<PairingCodeRow>("UPDATE", "pairing_codes", {
+  const rows = await rest<PairingCodeRow>("PATCH", "pairing_codes", {
     body: { used_at: now },
     prefer: "return=representation",
     query: {
