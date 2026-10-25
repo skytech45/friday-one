@@ -415,6 +415,9 @@ say("\n=== 9. WebSocket terminal authentication ===");
 
 say("\n=== 9a. F-17: concurrent terminal cap ===");
 {
+  // Section 9's valid-token terminal may still be closing server-side (the
+  // client-initiated close handshake races the server's session release, and
+  // a slow runner widens that race). Let it settle before counting slots.
   // Same probe as section 9's wsTest, which is scoped inside its block.
   const wsTest = (url) =>
     new Promise((resolve) => {
@@ -439,7 +442,11 @@ say("\n=== 9a. F-17: concurrent terminal cap ===");
       ws.on("error", () => { clearTimeout(t); resolve(null); });
     });
   const held = [];
+  await new Promise((r) => setTimeout(r, 1000));
   for (let i = 0; i < 5; i++) held.push(await openHold());
+  // Give any refused/duplicate close a moment to arrive before treating a
+  // non-OPEN socket as dead (open fires before a cap-refusal close lands).
+  await new Promise((r) => setTimeout(r, 500));
   check("5 concurrent terminals open", held.every(Boolean), `opened=${held.filter(Boolean).length}/5`);
 
   // Rare flake: a held session sometimes dies between open and probe. Log it
