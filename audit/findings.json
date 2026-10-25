@@ -281,7 +281,7 @@
       "title": "The database role is a PostgreSQL superuser",
       "severity": "medium",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-250",
       "cvss41": 6.8,
       "components": [
@@ -386,7 +386,7 @@
       "title": "An untrusted device receives full host telemetry",
       "severity": "medium",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-200",
       "cvss41": 4.0,
       "components": [

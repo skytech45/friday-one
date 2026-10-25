@@ -1,7 +1,7 @@
 # FRIDAY One — Remaining Work
 
-**Last updated:** 2026-10-24
-**State:** 15 findings open, 1 partially closed, plus 2 operational blockers
+**Last updated:** 2026-10-25
+**State:** 13 findings open, 1 partially closed, plus 2 operational blockers
 **Rule:** each item ships with a regression test and is re-executed before it is
 called done. A fix that has only been described is not a fix.
 
@@ -46,36 +46,13 @@ certificate and **not** the debug digest.
 
 ---
 
-### 2. F-09 · Stop using a PostgreSQL superuser for the application
-
-**Why now:** it is self-contained, needs no owner input, and caps the blast
-radius of every other finding that reaches the database.
-
-Currently `POSTGRES_USER=friday` doubles as both the container bootstrap role and
-the application role, so the app connects with `Superuser, Create role,
-Create DB, Replication, Bypass RLS`.
-
-**Do:**
-1. Create a dedicated role with only the privileges the app needs:
-   `CONNECT` on the database, `USAGE` on schema `public`,
-   `SELECT/INSERT/UPDATE/DELETE` on its tables, `USAGE` on sequences.
-2. Point `DATABASE_URL` at it. Keep the superuser for bootstrap only.
-3. Do **not** grant `CREATEDB`, `CREATEROLE`, `BYPASSRLS` or `REPLICATION`.
-
-**Verify:** as the app role, `SELECT rolsuper FROM pg_roles WHERE rolname = current_user`
-returns `false`; `CREATE DATABASE` is refused; the full e2e suite still passes.
-Reference: the audit harness already ran the whole application as a role owning
-only its own tables, with no extra grants — this is proven to work.
-
----
-
-### 3. F-22 → F-01 · Stable hostname, then wire the client's security
+### 2. F-22 → F-01 · Stable hostname, then wire the client's security
 
 **Order matters:** pinning a Cloudflare **quick tunnel** is pointless — it issues
 a new certificate on every restart. The named tunnel must land first or the pins
 churn constantly and pinning gets disabled "temporarily" and never restored.
 
-**3a. F-22 — named tunnel + authenticated discovery**
+**2a. F-22 — named tunnel + authenticated discovery**
 
 - `scripts/setup-named-tunnel.sh` is written but unexecuted. It requires **DNS
   delegation of `knistudio.in` to Cloudflare at GoDaddy** — an owner action, and
@@ -86,7 +63,7 @@ churn constantly and pinning gets disabled "temporarily" and never restored.
   `friday-one-api.service` / `friday-one-tunnel.service` are **not installed**
   (`systemctl` reports `not-found`). Nothing is deployed.
 
-**3b. F-01 — wire what already exists**
+**2b. F-01 — wire what already exists**
 
 All of this is implemented and has **zero call sites**:
 
@@ -103,7 +80,7 @@ All of this is implemented and has **zero call sites**:
 **Verify:** instrumented tests — biometric prompt required before the dashboard;
 a non-loopback host with an untrusted certificate fails the handshake; no
 `ApiClient.create` call remains in `MainActivity`.
-**Blocked by:** the DNS delegation (3a) for the pins to be meaningful.
+**Blocked by:** the DNS delegation (2a) for the pins to be meaningful.
 
 **Owner decision:** if the client hardening is *not* going to be done, the docs
 must be corrected to remove the pinning/biometric/binding claims. Shipping a doc
@@ -113,7 +90,7 @@ that describes controls the binary does not have is itself a finding.
 
 ## P1 — real risk, no owner blocker
 
-### 4. F-11 (remainder) · Upgrade the JWT dependency
+### 3. F-11 (remainder) · Upgrade the JWT dependency
 
 The exploitable behaviours are already closed at the application layer. What
 remains is the vulnerable package itself: `fast-jwt@5.0.6` still carries
@@ -128,19 +105,7 @@ advisories that `npm audit` reports as critical.
 `audit/audit-algtest.mjs` still rejects all 15 variants, **and** the unit suite
 passes. The acceptance matrix is the safety net for this change — run it first.
 
-### 5. F-13 · Gate host telemetry behind device trust
-
-`server/src/routes/system.ts` uses `authenticate`, not `authenticateTrusted`, so an
-**untrusted** device receives hostname, OS build, CPU model, uptime, boot time,
-mount layout, interface names and rates, and the server's own PID and RSS.
-
-**Do:** switch `/system` to `authenticateTrusted`; add a minimal
-`/system/summary` (`{ ok, version, uptime }`) for untrusted devices; drop
-`proc.pid` and `proc.rss` from the response.
-**Verify:** an untrusted device's token gets 403 on `/system` and 200 on
-`/system/summary`. The Android "Machine" tab must handle the 403 gracefully.
-
-### 6. F-12 · Stop surfacing unlinked crash reports to the owner
+### 4. F-12 · Stop surfacing unlinked crash reports to the owner
 
 `GET /crash` uses `WHERE user_id = $1 OR user_id IS NULL`, and the write endpoint
 is deliberately unauthenticated — so anyone can inject content into the owner's
@@ -154,7 +119,7 @@ and `stack_trace` on write (strip control characters, cap length).
 **Related:** F-23 — add a retention policy for unlinked reports and a delete
 endpoint.
 
-### 7. F-16 · Give the terminal a dedicated unprivileged account
+### 5. F-16 · Give the terminal a dedicated unprivileged account
 
 `NoNewPrivileges=true` is currently the single control between an authenticated
 session and root, and it only works because `sudo` is blocked. It does **not**
@@ -181,13 +146,13 @@ and the terminal still runs as `ubuntu`, so `HOME` redirection is not a boundary
 
 | # | Finding | Action |
 |---|---|---|
-| 8 | **F-20** | CI pipeline: `npm ci`, `npm audit --audit-level=high`, `tsc --noEmit`, the unit suite, `gitleaks`, Android lint + unit tests, and an `apksigner` release-signature assertion. Run `audit/audit-e2e.mjs` as an integration job — it is self-cleaning. |
-| 9 | **F-15** | Android tests. JVM: `DeviceIdentity` fingerprint stability, `CertificatePinning` loopback/apply decision, `SessionStore.isExpiring` boundaries, `jsString` escaping. Instrumented: biometric gate, WebView origin policy. `junit` is declared and unused today; there are no `src/test` or `src/androidTest` directories at all. |
-| 10 | **F-17** | Resource limits: cap concurrent terminal sessions, add a per-connection output budget, use `socket.pause()/resume()` for backpressure, and add `MemoryMax=` / `TasksMax=` to the systemd unit. |
-| 11 | **F-21** | Record the vendored `xterm.js` version and SHA-256 in `assets/terminal/THIRD-PARTY.md`, add a CI hash check, and ship or strip the `sourceMappingURL` comment (the map is absent). |
-| 12 | F-24 | Derive `platform` from the verified device key; render `name` as user-supplied. |
-| 13 | F-25 | Keep `CORS_ORIGINS` explicit and never `*`; document that the API is not browser-facing. |
-| 14 | F-26 | Stop storing the owner email in the audit `detail`; drop the hardcoded personal name in `seed-owner.ts`. |
+| 6 | **F-20** | CI pipeline: `npm ci`, `npm audit --audit-level=high`, `tsc --noEmit`, the unit suite, `gitleaks`, Android lint + unit tests, and an `apksigner` release-signature assertion. Run `audit/audit-e2e.mjs` as an integration job — it is self-cleaning. |
+| 7 | **F-15** | Android tests. JVM: `DeviceIdentity` fingerprint stability, `CertificatePinning` loopback/apply decision, `SessionStore.isExpiring` boundaries, `jsString` escaping. Instrumented: biometric gate, WebView origin policy. `junit` is declared and unused today; there are no `src/test` or `src/androidTest` directories at all. |
+| 8 | **F-17** | Resource limits: cap concurrent terminal sessions, add a per-connection output budget, use `socket.pause()/resume()` for backpressure, and add `MemoryMax=` / `TasksMax=` to the systemd unit. |
+| 9 | **F-21** | Record the vendored `xterm.js` version and SHA-256 in `assets/terminal/THIRD-PARTY.md`, add a CI hash check, and ship or strip the `sourceMappingURL` comment (the map is absent). |
+| 10 | F-24 | Derive `platform` from the verified device key; render `name` as user-supplied. |
+| 11 | F-25 | Keep `CORS_ORIGINS` explicit and never `*`; document that the API is not browser-facing. |
+| 12 | F-26 | Stop storing the owner email in the audit `detail`; drop the hardcoded personal name in `seed-owner.ts`. |
 
 ---
 
@@ -222,7 +187,7 @@ These are not tasks I can complete unilaterally.
 
 1. **Keep `kind=shell` (a general `bash -l`) or remove it?**
    The roadmap deliberately does not remove it silently. Options: keep it and
-   isolate it properly (item 7), remove `shell` from `COMMANDS` and keep only
+   isolate it properly (item 5), remove `shell` from `COMMANDS` and keep only
    `hermes` and `opencode`, or require a second factor for that specific kind.
 2. **Keep `/auth/register` live, or provision only via `seed-owner.ts`?**
    Removing it eliminates a whole class of risk and lets the client drop its
@@ -236,9 +201,9 @@ These are not tasks I can complete unilaterally.
 
 | Batch | Items | Why together |
 |---|---|---|
-| 1 | F-14, F-09 | No owner input, no dependencies, immediate risk reduction |
+| 1 | F-14 | No owner input, no dependencies, immediate risk reduction. (F-09 is done — committed as `2bb194b`.) |
 | 2 | F-22 (needs DNS), then F-01 | Pins are meaningless without a stable hostname |
-| 3 | F-11 remainder, F-13, F-12 + F-23 | Server-side, covered by the existing e2e suite |
+| 3 | F-11 remainder, F-12 + F-23 | Server-side, covered by the existing e2e suite. (F-13 is done — committed as `b16d755`.) |
 | 4 | F-16, F-17 | Isolation and resource caps; touches the deployment |
 | 5 | F-20, F-15, F-21, F-24, F-25, F-26 | Hygiene; CI first so the rest is enforced |
 | 6 | RR-09, RR-05 | Operational, not code |

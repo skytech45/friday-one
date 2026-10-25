@@ -1,8 +1,8 @@
 # FRIDAY One — Completed Work
 
-**Last updated:** 2026-10-24
+**Last updated:** 2026-10-25
 **Scope:** security remediation, P0 and P1 batches
-**State:** 4 commits, 3 tags, working tree clean, all suites green
+**State:** 7 commits, 3 tags, working tree clean, all suites green
 
 This file records what has actually been **built, executed and verified**.
 Anything not listed here is still open — see [`todo.md`](todo.md).
@@ -17,7 +17,8 @@ Every number below comes from a real run, not an estimate.
 |---|---|
 | `npx tsc --noEmit` | **clean**, 0 errors |
 | `npx tsx --test test/*.test.ts` | **20/20** pass (2 suites) |
-| `audit/audit-e2e.mjs` | **59/59** checks pass |
+| `audit/audit-e2e.mjs` | **63/63** checks pass |
+| `audit/audit-f09.mjs` | **16/16** checks pass |
 | `audit/audit-r02.mjs` | **5/5** pass |
 | `audit/audit-r07.mjs` | **5/5** pass |
 | `audit/audit-r09.mjs` | **7/7** pass |
@@ -33,12 +34,14 @@ Every number below comes from a real run, not an estimate.
 | `0a497fc` | `audit-p1-20261024` | Client-IP spoofing, immediate revocation, harness fixes |
 | `87d5e37` | `audit-p1b-20261024` | Secrets out of the process environment |
 | `1fd01a0` | — | Audit status recorded in the report set |
+| `2bb194b` | — | Least-privilege database role (F-09) |
+| `b16d755` | — | `/system` telemetry gated on device trust (F-13) |
 
 ---
 
 ## Findings closed
 
-10 findings fixed, 1 partially fixed. Each entry names the evidence.
+12 findings fixed, 1 partially fixed. Each entry names the evidence.
 
 ### F-02 · `FS_ROOTS` exposed the whole home directory — **fixed**
 
@@ -130,7 +133,51 @@ The path jail was already correct; the configured root was not.
   `/home/ubuntu` is still readable, and the harness records that honestly
   (`READABLE`). A dedicated OS user (R-10) is the real fix and remains open.
 
-### F-11 · `fast-jwt` advisories — **partially fixed**
+### F-09 · The application ran as a PostgreSQL superuser — **fixed**
+
+- New **`friday_app`** role on the live database: `CONNECT` + `USAGE` on schema
+  `public` + `SELECT/INSERT/UPDATE/DELETE` on all tables + `USAGE/SELECT` on
+  sequences. No `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION` or
+  `BYPASSRLS`. `ALTER DEFAULT PRIVILEGES FOR ROLE friday` covers tables and
+  sequences the bootstrap role creates in the future.
+- `server/.env`: `DATABASE_URL` now authenticates as `friday_app`. The bootstrap
+  URL moved to **`MIGRATE_DATABASE_URL`**, which only `migrate.ts` reads — it runs
+  as a separate process before the server starts and exits, so the long-running
+  server never holds the superuser credential.
+- `server/src/migrate.ts`: builds its own single-connection pool from
+  `MIGRATE_DATABASE_URL` (falls back to `DATABASE_URL` so the test harnesses keep
+  working unchanged). `MIGRATE_DATABASE_URL` was added to the `config.ts` scrub
+  list so it is deleted from the server process's environment.
+- `infra/setup-app-role.sh` (new): idempotent role creation/rotation with the
+  grants above, so the setup is reproducible on a fresh host.
+- **Verified** (`audit/audit-f09.mjs`, 16/16, against the live `.env`): the app
+  role reports `rolsuper/rolcreatedb/rolcreaterole/rolreplication/rolbypassrls`
+  all false; a real `CREATE DATABASE` statement is refused; no `CREATE` privilege
+  on the database or schema `public`; DML present on all six app tables; and
+  `migrate.ts` still runs to completion as the bootstrap role.
+- **Full e2e suite re-run on the new wiring:** 59/59 at the time of the commit
+  (63/63 after the F-13 additions below).
+
+### F-13 · An untrusted device received full host telemetry — **fixed**
+
+- `server/src/routes/system.ts`: `/system` now requires
+  **`authenticateTrusted`** — hostname, OS build, CPU model, load, mount layout,
+  interface names/rates and temperatures are for trusted devices only.
+- New minimal **`/system/summary`** (`{ ok, version, uptime_s }`) behind plain
+  `authenticate`, so an authenticated untrusted device can still show "server
+  reachable" without learning anything about the host.
+- `proc.pid` and `proc.rss` **dropped** from the `/system` response — the
+  server's own PID and memory footprint are reconnaissance, not telemetry.
+- Android `MainActivity.kt`: the Machine tab maps an HTTP 403 to "This device
+  isn't trusted — approve it from a trusted device to see machine telemetry"
+  instead of a raw `HttpException` message.
+- **Verified** in `audit/audit-e2e.mjs` (now 63/63): an untrusted device's token
+  gets **403 `device_not_trusted`** on `/system` (body leaks nothing), **200**
+  with exactly `ok`/`version`/`uptime_s` on `/system/summary`, 401 on summary
+  without a token; and `/system` still returns full telemetry for the trusted
+  owner device. The R-08 pre-revocation probe moved to `/system/summary`, since
+  the test device there is deliberately untrusted.
+
 
 - The **exploitable behaviours** are closed: algorithms pinned, `crit` rejected,
   array payloads rejected, `exp` required.
@@ -183,7 +230,8 @@ Shared helpers: `spawnGrouped` / `killGroup` (kill the whole process group),
 
 | File | Covers |
 |---|---|
-| `audit/audit-e2e.mjs` | 59 end-to-end checks across auth, files, WS, revocation |
+| `audit/audit-e2e.mjs` | 63 end-to-end checks across auth, files, WS, revocation |
+| `audit/audit-f09.mjs` | 16 checks: the app role is least-privilege and migrations still work |
 | `audit/audit-r02.mjs` | Fail-closed registration (F-04) |
 | `audit/audit-r07.mjs` | Client-IP spoofing and the account lockout (F-05) |
 | `audit/audit-r09.mjs` | Terminal environment isolation (F-10) |
