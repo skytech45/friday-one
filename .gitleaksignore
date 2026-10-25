@@ -1,0 +1,8 @@
+# Gitleaks false positives, verified by hand 2026-10-25:
+# - audit/security-audit-summary.md line 85: a REDACTED example JWT header
+#   (eyJhbGciOiJIUzI1NiJ9 is just the alg=HS256 header, base64 of {"alg":"HS256"})
+#   shown in the audit report — not a secret.
+# - xterm.js line 1: the minified identifier `TwoKeyMap` trips the generic
+#   api-key heuristic. Vendored third-party code; nothing secret.
+789777de780d5777576ee5350def586adb5b233b:audit/security-audit-summary.md:generic-api-key:85
+789777de780d5777576ee5350def586adb5b233b:android/app/src/main/assets/terminal/xterm.js:generic-api-key:1

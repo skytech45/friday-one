@@ -25,4 +25,13 @@ node audit/audit-e2e.mjs | tail -3
 echo "== vendored asset hashes (F-21) =="
 bash "$REPO_ROOT/scripts/check-vendor-hashes.sh"
 
+echo "== gitleaks (full history; false positives in .gitleaksignore) =="
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks detect --source "$REPO_ROOT" --no-banner --redact
+elif command -v docker >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+  sudo -n docker run --rm -v "$REPO_ROOT:/repo" zricethezav/gitleaks:latest detect --source /repo --no-banner --redact
+else
+  echo "SKIP: gitleaks not available on this host (CI still runs it)"
+fi
+
 echo "== CI GATE: ALL GREEN =="

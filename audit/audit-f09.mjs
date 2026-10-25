@@ -26,6 +26,20 @@ const appUser = new URL(appUrl).username;
 if (appUser === "friday") throw new Error("DATABASE_URL still uses the bootstrap superuser role");
 console.log(`app role: ${appUser}`);
 
+// Migrate FIRST: on a fresh database (CI container) the tables do not exist
+// yet, and the DML checks below need them. This is also the production order
+// — migrate.ts runs as the bootstrap role before the server starts.
+const migPre = spawnSync("npx", ["tsx", "src/migrate.ts"], {
+  cwd: new URL("../server", import.meta.url).pathname,
+  env: { ...process.env, MIGRATE_DATABASE_URL: migrateUrl },
+  encoding: "utf8",
+});
+if (migPre.status !== 0) {
+  console.error(`migrate.ts failed: ${(migPre.stderr || "").trim().split("\n").pop()}`);
+  process.exit(1);
+}
+console.log(`pre-migrate: ${(migPre.stdout || "").trim().split("\n").pop()}`);
+
 const c = new pg.Client({ connectionString: appUrl });
 await c.connect();
 
@@ -64,7 +78,7 @@ for (const t of tables) {
 }
 await c.end();
 
-// The bootstrap role must still be able to migrate (this is the migrate.ts path).
+// The bootstrap role must STILL be able to migrate (idempotent re-run).
 const mig = spawnSync("npx", ["tsx", "src/migrate.ts"], {
   cwd: new URL("../server", import.meta.url).pathname,
   env: { ...process.env, MIGRATE_DATABASE_URL: migrateUrl },
