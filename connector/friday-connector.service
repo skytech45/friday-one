@@ -1,0 +1,34 @@
+[Unit]
+Description=FRIDAY Connector (outbound WSS execution gate)
+Documentation=file:/home/ubuntu/friday-one/docs/SYSTEM_DESIGN.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# MUST be a dedicated unprivileged account (todo F-16 pattern): its own home,
+# no sudo, no docker group. The connector's only secret is its own revocable
+# credential in /etc/friday-connector (0600, owned by this account).
+User=friday-connector
+Group=friday-connector
+EnvironmentFile=-/etc/friday-connector/env
+ExecStart=/usr/bin/node /home/ubuntu/friday-one/connector/dist/index.js run
+Restart=on-failure
+RestartSec=5
+
+# --- Hardening (matches friday-one-api.service pattern) ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/etc/friday-connector
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Outbound only; there is no inbound listener by design.
+# MemoryMax=512M
+# TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
