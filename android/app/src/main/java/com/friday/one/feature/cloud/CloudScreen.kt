@@ -45,7 +45,10 @@ fun CloudScreen(auth: SupabaseAuth) {
             CircularProgressIndicator(color = Dash.Accent)
         }
         session == null -> LoginView(auth) { s -> scope.launch { auth.save(s); session = s } }
-        else -> DashboardView(auth, session!!)
+        else -> DashboardView(auth, session!!, onSignedOut = {
+            scope.launch { auth.clear() }
+            session = null
+        })
     }
 }
 
@@ -100,11 +103,11 @@ private fun LoginView(auth: SupabaseAuth, onSignedIn: (com.friday.one.data.Cloud
 }
 
 @Composable
-private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.CloudSession) {
+private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.CloudSession, onSignedOut: () -> Unit) {
     val scope = rememberCoroutineScope()
     var servers by remember { mutableStateOf<List<CloudServer>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var pairingCode by remember { mutableStateOf<Pair<String, String>?>(null) } // serverId to code
+    var enrollment by remember { mutableStateOf<com.friday.one.data.EnrollmentInfo?>(null) }
     var chatServer by remember { mutableStateOf<CloudServer?>(null) }
     val client = remember { ControlPlaneClient() }
 
@@ -129,15 +132,15 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
                 Text("Servers", color = Dash.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Text(session.email, color = Dash.Dim, fontSize = 11.sp)
             }
-            TextButton(onClick = { scope.launch { auth.clear(); } /* session reset via recreate */ }) {
+            TextButton(onClick = onSignedOut) {
                 Text("Sign out", color = Dash.Bad, fontSize = 12.sp)
             }
         }
         Spacer(Modifier.height(8.dp))
         Button(onClick = {
             scope.launch {
-                runCatching { client.createEnrollment(session.accessToken, "server-${servers?.size ?: 0 + 1}") }
-                    .onSuccess { pairingCode = it }
+                runCatching { client.createEnrollment(session.accessToken, "server-${(servers?.size ?: 0) + 1}") }
+                    .onSuccess { enrollment = it }
                     .onFailure { loadError = it.message }
             }
         }) {
@@ -177,24 +180,51 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
         }
     }
 
-    pairingCode?.let { (serverId, code) ->
+    enrollment?.let { info ->
+        // v2 pairing: install command with the one-time token, then the
+        // 16-20 digit code the connector prints on the server terminal.
+        var codeInput by remember(info.enrollmentId) { mutableStateOf("") }
+        var claiming by remember(info.enrollmentId) { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { pairingCode = null },
+            onDismissRequest = { enrollment = null },
             title = { Text("Pair this server", color = Dash.Text) },
             text = {
                 Column {
-                    Text("Run this on the target server:", color = Dash.Dim, fontSize = 12.sp)
-                    Text("`friday-connector pair`", color = Dash.Text, fontSize = 12.sp)
-                    Text("with code:", color = Dash.Dim, fontSize = 12.sp)
-                    Text(code, color = Dash.Accent, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("Single-use, expires in 15 minutes.", color = Dash.Dim, fontSize = 11.sp)
+                    Text("1. On the VPS, run:", color = Dash.Dim, fontSize = 12.sp)
+                    Text(
+                        "curl -fsSL https://github.com/skytech45/friday-one/releases/latest/download/install.sh | sudo bash -s -- enroll",
+                        color = Dash.Text, fontSize = 11.sp,
+                    )
+                    Text("2. Paste the one-time token:", color = Dash.Dim, fontSize = 12.sp)
+                    Text(info.token, color = Dash.Accent, fontSize = 11.sp)
+                    Text("3. Terminal shows a 16–20 digit code — enter it:", color = Dash.Dim, fontSize = 12.sp)
+                    OutlinedTextField(
+                        value = codeInput,
+                        onValueChange = { codeInput = it.filter(Char::isDigit).take(20) },
+                        singleLine = true,
+                        colors = cloudFieldColors(),
+                    )
+                    if (claiming) Text("claiming…", color = Dash.Dim, fontSize = 11.sp)
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    pairingCode = null
-                    scope.launch { reload() }
-                }) { Text("Done", color = Dash.Accent) }
+                TextButton(
+                    enabled = !claiming && codeInput.length >= 16,
+                    onClick = {
+                        claiming = true
+                        scope.launch {
+                            runCatching { client.claimEnrollment(session.accessToken, info.enrollmentId, codeInput) }
+                                .onSuccess {
+                                    enrollment = null
+                                    reload()
+                                }
+                                .onFailure { loadError = it.message; enrollment = null }
+                        }
+                    },
+                ) { Text("Pair", color = Dash.Accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = { enrollment = null }) { Text("Cancel", color = Dash.Dim) }
             },
         )
     }

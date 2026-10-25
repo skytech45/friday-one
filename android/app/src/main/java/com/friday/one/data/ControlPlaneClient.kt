@@ -20,6 +20,13 @@ data class CloudServer(
     val online: Boolean,
 )
 
+data class EnrollmentInfo(
+    val enrollmentId: String,
+    val serverId: String,
+    val token: String,
+    val expiresAt: String,
+)
+
 /**
  * Control-plane REST client: list servers, create an enrollment (pairing
  * code). Authenticated with the Supabase access token — identity is derived
@@ -50,12 +57,12 @@ class ControlPlaneClient {
         }
     }
 
-    /** Returns the single-use pairing code to type into the connector. */
-    fun createEnrollment(accessToken: String, name: String): Pair<String, String> {
+    /** v2 enrollment: returns enrollment id + one-time install token. */
+    fun createEnrollment(accessToken: String, name: String): EnrollmentInfo {
         val body = buildJsonObject { put("name", name) }
             .toString().toRequestBody("application/json".toMediaType())
         val req = Request.Builder()
-            .url("${BuildConfig.CONTROL_PLANE_URL}/api/v1/servers/enrollments")
+            .url("${BuildConfig.CONTROL_PLANE_URL}/api/v1/enrollments")
             .header("Authorization", "Bearer $accessToken")
             .post(body)
             .build()
@@ -63,9 +70,39 @@ class ControlPlaneClient {
             val text = resp.body?.string() ?: ""
             if (!resp.isSuccessful) error("enrollment failed (${resp.code})")
             val obj = json.parseToJsonElement(text) as JsonObject
-            val serverId = obj["server_id"]?.toString()?.trim('"') ?: error("no server_id")
-            val code = obj["code"]?.toString()?.trim('"') ?: error("no code")
-            return serverId to code
+            fun s(k: String) = obj[k]?.toString()?.trim('"') ?: error("no $k")
+            return EnrollmentInfo(s("enrollment_id"), s("server_id"), s("enrollment_token"), s("expires_at"))
+        }
+    }
+
+    /** v2 claim: submit the 16-20 digit code shown on the server terminal. */
+    fun claimEnrollment(accessToken: String, enrollmentId: String, code: String): String {
+        val body = buildJsonObject { put("code", code) }
+            .toString().toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
+            .url("${BuildConfig.CONTROL_PLANE_URL}/api/v1/enrollments/$enrollmentId/claim")
+            .header("Authorization", "Bearer $accessToken")
+            .post(body)
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string() ?: ""
+            if (!resp.isSuccessful) {
+                val reason = (json.parseToJsonElement(text) as? JsonObject)
+                    ?.get("error")?.toString()?.trim('"') ?: "${resp.code}"
+                error("claim failed: $reason")
+            }
+            return "claim_requested"
+        }
+    }
+
+    fun revokeServer(accessToken: String, serverId: String) {
+        val req = Request.Builder()
+            .url("${BuildConfig.CONTROL_PLANE_URL}/api/v1/servers/$serverId/revoke")
+            .header("Authorization", "Bearer $accessToken")
+            .post(byteArrayOf().toRequestBody(null))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) error("revoke failed (${resp.code})")
         }
     }
 

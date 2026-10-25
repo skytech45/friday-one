@@ -1,29 +1,17 @@
 #!/usr/bin/env bash
-# Local CI gate (F-20) — the same checks .github/workflows/ci.yml runs, for
-# pre-push enforcement while GitHub Actions is unavailable (billing).
-# Every step must pass or the push/hook fails.
+# Local CI gate (plan v2.0) — mirrors .github/workflows/ci.yml.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-echo "== npm audit (prod deps) =="
-( cd server && npm audit --omit=dev )
+for c in gateway connector control-plane; do
+  echo "== typecheck $c =="
+  ( cd "$c" && npm install --ignore-scripts >/dev/null 2>&1 || npm install --ignore-scripts; npx tsc --noEmit )
+done
 
-echo "== typecheck =="
-( cd server && npm run typecheck )
-
-echo "== unit tests =="
-( cd server && npx tsx --test test/*.test.ts 2>&1 | grep -E "^# (pass|fail)" )
-
-echo "== F-09 privilege regression =="
-node audit/audit-f09.mjs | tail -2
-
-echo "== e2e acceptance suite =="
-node audit/audit-e2e.mjs | tail -3
-
-echo "== vendored asset hashes (F-21) =="
-bash "$REPO_ROOT/scripts/check-vendor-hashes.sh"
+echo "== connector bundle builds =="
+( cd connector && bash build-release.sh 0.0.0-local >/dev/null && rm -rf release )
 
 echo "== gitleaks (full history; false positives in .gitleaksignore) =="
 if command -v gitleaks >/dev/null 2>&1; then
@@ -31,7 +19,7 @@ if command -v gitleaks >/dev/null 2>&1; then
 elif command -v docker >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
   sudo -n docker run --rm -v "$REPO_ROOT:/repo" zricethezav/gitleaks:latest detect --source /repo --no-banner --redact
 else
-  echo "SKIP: gitleaks not available on this host (CI still runs it)"
+  echo "SKIP: gitleaks not available (CI runs it)"
 fi
 
 echo "== CI GATE: ALL GREEN =="

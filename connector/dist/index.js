@@ -10,7 +10,7 @@
  * gate immediately before execution — fail closed.
  */
 import { loadConfig, readCredential } from "./config.js";
-import { installCredential, redeemPairingCode } from "./pairing.js";
+import { enroll } from "./enroll.js";
 import { decide, loadPolicy } from "./policy.js";
 import { AcpAgent } from "./acp.js";
 import { GatewayConnection } from "./gateway.js";
@@ -88,13 +88,12 @@ async function handleDispatch(cfg, env) {
 async function main() {
     const cfg = loadConfig();
     const command = process.argv[2] ?? "run";
-    if (command === "pair") {
-        const code = process.env.FRIDAY_PAIRING_CODE ?? "";
-        if (!code)
-            throw new Error("FRIDAY_PAIRING_CODE is required for `pair` (single-use, from the app)");
-        const result = await redeemPairingCode(cfg.controlPlaneUrl, code, CONNECTOR_VERSION);
-        installCredential(cfg.credentialFile, result.credential);
-        console.log(`paired: server ${result.serverId}; credential written to ${cfg.credentialFile}`);
+    if (command === "enroll") {
+        // Plan v2: token comes from the app's version-pinned install command.
+        const token = process.env.FRIDAY_ENROLLMENT_TOKEN ?? process.argv[3] ?? "";
+        if (!token)
+            throw new Error("FRIDAY_ENROLLMENT_TOKEN required for `enroll` (from the app's install command)");
+        await enroll(cfg.controlPlaneUrl, token, cfg.credentialFile);
         return;
     }
     if (command === "run") {
@@ -139,7 +138,7 @@ async function main() {
         }
         return;
     }
-    throw new Error(`unknown command: ${command} (use: pair | run)`);
+    throw new Error(`unknown command: ${command} (use: enroll | run)`);
 }
 process.on("SIGTERM", () => {
     agent?.shutdown();

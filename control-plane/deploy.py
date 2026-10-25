@@ -21,12 +21,15 @@ FILES = [
     "vercel.json",
     "api/v1/health.ts",
     "api/v1/servers/index.ts",
-    "api/v1/servers/enrollments.ts",
-    "api/v1/servers/enrollments/redeem.ts",
+    "api/v1/servers/[id]/revoke.ts",
+    "api/v1/enrollments/index.ts",
+    "api/v1/enrollments/session.ts",
+    "api/v1/enrollments/[id]/claim.ts",
     "lib/env.ts",
     "lib/util.ts",
     "lib/auth.ts",
     "lib/supabase.ts",
+    "lib/enrollments.ts",
 ]
 
 ENV_VARS = {
