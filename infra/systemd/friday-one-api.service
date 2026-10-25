@@ -32,6 +32,10 @@ LockPersonality=true
 # Restrict network to loopback only — the tunnel service handles external exposure.
 # AF_INET/AF_INET6 restricted via socket filtering would be ideal but requires
 # a custom seccomp profile; binding to 127.0.0.1 in index.ts is the enforcement.
+# F-17: terminal children are spawned by the server and live INSIDE this
+# cgroup, so these limits bound the whole tree — server plus every PTY.
+MemoryMax=2G
+TasksMax=256
 
 [Install]
 WantedBy=multi-user.target

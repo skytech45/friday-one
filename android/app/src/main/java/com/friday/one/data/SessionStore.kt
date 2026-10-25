@@ -12,6 +12,34 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore by preferencesDataStore(name = "friday_session")
 
 /**
+ * True if the JWT is expired or expires within [skewSeconds].
+ *
+ * Only the `exp` claim is read, and the signature is deliberately NOT
+ * verified: this is a local optimisation to avoid a pointless round-trip,
+ * never a security decision. The server verifies every token it receives.
+ * Anything unparseable is treated as expired, which fails safe - a refresh
+ * costs one request, whereas trusting an unreadable token costs a dead UI.
+ *
+ * Top-level (not a method) so JVM unit tests can exercise the boundaries
+ * without an Android Context; java.util.Base64 instead of android.util.Base64
+ * for the same reason (URL-safe, no padding — identical alphabet for JWTs).
+ */
+internal fun isJwtExpiring(jwt: String, skewSeconds: Long, nowSeconds: Long): Boolean {
+    return runCatching {
+        val parts = jwt.split('.')
+        if (parts.size < 2) return true
+        val payload = String(
+            java.util.Base64.getUrlDecoder().decode(parts[1]),
+            Charsets.UTF_8,
+        )
+        val exp = Regex("\"exp\"\\s*:\\s*(\\d+)").find(payload)
+            ?.groupValues?.get(1)?.toLongOrNull()
+            ?: return true
+        exp - nowSeconds <= skewSeconds
+    }.getOrDefault(true)
+}
+
+/**
  * Session state on disk.
  *
  * Tokens are the only sensitive thing here. They live in DataStore (app-private),
@@ -121,23 +149,7 @@ class SessionStore(private val context: Context) {
      * costs one request, whereas trusting an unreadable token costs a dead UI.
      */
     private fun isExpiring(jwt: String, skewSeconds: Long): Boolean {
-        return runCatching {
-            val parts = jwt.split('.')
-            if (parts.size < 2) return true
-            val payload = String(
-                android.util.Base64.decode(
-                    parts[1],
-                    android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or
-                        android.util.Base64.NO_WRAP,
-                ),
-                Charsets.UTF_8,
-            )
-            val exp = Regex("\"exp\"\\s*:\\s*(\\d+)").find(payload)
-                ?.groupValues?.get(1)?.toLongOrNull()
-                ?: return true
-            val now = System.currentTimeMillis() / 1000
-            exp - now <= skewSeconds
-        }.getOrDefault(true)
+        return isJwtExpiring(jwt, skewSeconds, System.currentTimeMillis() / 1000)
     }
 
     suspend fun clear() {

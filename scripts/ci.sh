@@ -22,4 +22,7 @@ node audit/audit-f09.mjs | tail -2
 echo "== e2e acceptance suite =="
 node audit/audit-e2e.mjs | tail -3
 
+echo "== vendored asset hashes (F-21) =="
+bash "$REPO_ROOT/scripts/check-vendor-hashes.sh"
+
 echo "== CI GATE: ALL GREEN =="

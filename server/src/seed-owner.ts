@@ -54,7 +54,7 @@ async function main(): Promise<void> {
     await query(
       `INSERT INTO users (email, password_hash, display_name)
        VALUES ($1, $2, $3)`,
-      [EMAIL, hash, "Sachin"],
+      [EMAIL, hash, "Owner"], // F-26: no personal name in source
     );
     console.log(`owner account created: ${EMAIL}`);
   }

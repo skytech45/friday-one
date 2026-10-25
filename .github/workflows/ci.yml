@@ -64,6 +64,8 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Expose deps to the audit harnesses
         run: ln -s ../server/node_modules audit/node_modules
+      - name: Vendored asset hashes (F-21)
+        run: bash scripts/check-vendor-hashes.sh
       - name: Provision the least-privilege app role (exercises infra/setup-app-role.sh)
         run: APP_ROLE_PASSWORD="$APP_ROLE_PW" infra/setup-app-role.sh
       - name: Create CI server/.env (gitignored; CI-only secrets)
@@ -78,6 +80,20 @@ jobs:
         run: node audit/audit-f09.mjs
       - name: Full e2e acceptance suite
         run: node audit/audit-e2e.mjs
+
+  android:
+    name: Android unit tests (F-15)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      # JVM-only unit tests: no emulator, no keystore needed. Instrumented
+      # tests and the release-signature assertion land with F-14's CI secrets.
+      - run: gradle -p android :app:testReleaseUnitTest --console=plain
 
   gitleaks:
     name: secret scan

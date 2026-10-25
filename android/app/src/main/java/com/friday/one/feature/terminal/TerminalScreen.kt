@@ -86,7 +86,7 @@ fun TerminalScreen(
 }
 
 /** https -> wss, http -> ws. Token rides in the query string (see terminal.ts). */
-private fun wsUrlFor(baseUrl: String, kind: String, token: String): String {
+internal fun wsUrlFor(baseUrl: String, kind: String, token: String): String {
     val ws = baseUrl.trimEnd('/')
         .replaceFirst("https://", "wss://")
         .replaceFirst("http://", "ws://")
@@ -94,7 +94,7 @@ private fun wsUrlFor(baseUrl: String, kind: String, token: String): String {
 }
 
 /** Escape an arbitrary string for embedding in a single-quoted JS literal. */
-private fun jsString(value: String): String =
+internal fun jsString(value: String): String =
     "'" + value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
 
 private fun sendToTerm(webView: WebView?, data: String) {

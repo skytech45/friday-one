@@ -19,6 +19,19 @@ const COMMANDS: Record<string, { cmd: string; label: string }> = {
   shell: { cmd: "bash -l", label: "Shell" },
 };
 
+// F-17: every terminal is a live PTY on the host, so each one is bounded.
+//  - a server-wide cap on concurrent sessions;
+//  - backpressure: when the WebSocket's send buffer exceeds the high mark
+//    (a client that stopped reading, or a link that collapsed), the child's
+//    output streams are PAUSED until the buffer drains below the low mark —
+//    otherwise `cat bigfile` buffers unbounded memory in this process;
+//  - an idle timeout: a session that receives no client input is closed.
+const MAX_TERMINALS = 5;
+const SOCKET_BUFFER_HIGH = 4 * 1024 * 1024;
+const SOCKET_BUFFER_LOW = 1 * 1024 * 1024;
+const IDLE_TIMEOUT_MS = 30 * 60_000;
+let liveTerminals = 0;
+
 interface TerminalQuery {
   token?: string;
   kind?: string;
@@ -75,6 +88,12 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
         return;
       }
 
+      if (liveTerminals >= MAX_TERMINALS) {
+        socket.close(4529, "too_many_terminals");
+        return;
+      }
+      liveTerminals++;
+
       // Clamped generously rather than defensively. The previous 40-column floor
       // was itself wider than a phone in portrait: the PTY was forced to 40 cols
       // even when the screen fit 30, so TUIs wrapped their output for a width
@@ -121,9 +140,13 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
       req.log.info({ kind: q.kind, pid: child.pid }, "terminal opened");
 
       let closed = false;
+      let idleTimer: ReturnType<typeof setInterval> | null = null;
+      let lastClientInput = Date.now();
       const stop = (): void => {
         if (closed) return;
         closed = true;
+        liveTerminals--;
+        if (idleTimer) clearInterval(idleTimer);
         try {
           child.kill("SIGTERM");
           setTimeout(() => {
@@ -134,21 +157,64 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
         }
       };
 
+      // Backpressure (F-17): ws keeps buffering what we hand it even when the
+      // client stops reading. Pause the child above the high watermark and
+      // poll until the buffer drains below the low one.
+      let paused = false;
+      let resumeTimer: ReturnType<typeof setInterval> | null = null;
+      const wsSock = socket as unknown as { bufferedAmount: number };
+      const applyBackpressure = (): void => {
+        if (!paused && wsSock.bufferedAmount > SOCKET_BUFFER_HIGH) {
+          paused = true;
+          child.stdout.pause();
+          child.stderr.pause();
+          resumeTimer = setInterval(() => {
+            if (closed || wsSock.bufferedAmount <= SOCKET_BUFFER_LOW) {
+              if (resumeTimer) clearInterval(resumeTimer);
+              resumeTimer = null;
+              paused = false;
+              if (!closed) {
+                child.stdout.resume();
+                child.stderr.resume();
+              }
+            }
+          }, 200);
+        }
+      };
+
+      // Idle timeout (F-17): kill sessions nobody is driving.
+      idleTimer = setInterval(() => {
+        if (Date.now() - lastClientInput > IDLE_TIMEOUT_MS) {
+          req.log.info({ pid: child.pid }, "terminal idle timeout");
+          stop();
+          if (socket.readyState === socket.OPEN) socket.close(1001, "idle_timeout");
+        }
+      }, 60_000);
+
       child.stdout.on("data", (buf: Buffer) => {
-        if (socket.readyState === socket.OPEN) socket.send(buf.toString("utf8"));
+        if (socket.readyState === socket.OPEN) {
+          socket.send(buf.toString("utf8"));
+          applyBackpressure();
+        }
       });
       child.stderr.on("data", (buf: Buffer) => {
-        if (socket.readyState === socket.OPEN) socket.send(buf.toString("utf8"));
+        if (socket.readyState === socket.OPEN) {
+          socket.send(buf.toString("utf8"));
+          applyBackpressure();
+        }
       });
       child.on("exit", (code) => {
         if (socket.readyState === socket.OPEN) {
           socket.send(`\r\n[process exited: ${code ?? "signal"}]\r\n`);
           socket.close(1000, "process_exited");
         }
-        closed = true;
+        // Not `closed = true` directly: the counter and idle timer must be
+        // released exactly as in the socket-close path (F-17).
+        stop();
       });
 
       socket.on("message", (raw: Buffer) => {
+        lastClientInput = Date.now();
         let text = raw.toString("utf8");
         // Control frames: resize hint and explicit kill.
         if (text.startsWith("\u0000")) {

@@ -88,6 +88,12 @@ async function upsertDevice(
   tx: { query: typeof query },
 ): Promise<DeviceRow> {
   const fp = hashFingerprint(d.fingerprint);
+  // F-24: name/platform/app_version are CLIENT-SUPPLIED labels, never identity.
+  // They are stored only for display, length-capped by the request schema, and
+  // control characters are stripped here so a device cannot smuggle terminal
+  // escapes into the owner's console. Nothing authorises off these fields.
+  const clean = (s: string | undefined): string | null =>
+    s === undefined ? null : s.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim() || null;
   const res = await tx.query<DeviceRow>(
     `INSERT INTO devices (user_id, fingerprint, name, platform, app_version, trusted)
      VALUES ($1, $2, $3, $4, $5, $6)
@@ -97,7 +103,7 @@ async function upsertDevice(
            platform = COALESCE(EXCLUDED.platform, devices.platform),
            app_version = COALESCE(EXCLUDED.app_version, devices.app_version)
      RETURNING id, trusted, revoked`,
-    [userId, fp, d.name ?? null, d.platform ?? null, d.appVersion ?? null, isFirstDevice],
+    [userId, fp, clean(d.name), clean(d.platform), clean(d.appVersion), isFirstDevice],
   );
   const row = res.rows[0];
   if (!row) throw new Error("device upsert returned no row");
@@ -187,7 +193,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     });
 
     const tokens = await issueSession(app, created.userId, created.deviceId, req);
-    await audit(created.userId, created.deviceId, "auth.register", clientIp(req), { email });
+    // F-26: the user id already identifies the account — do not duplicate the
+    // owner's email into the audit detail. (register_rejected above keeps the
+    // email deliberately: a rejected attempt has no user id, and the attempted
+    // address IS the investigation data.)
+    await audit(created.userId, created.deviceId, "auth.register", clientIp(req));
     return reply.code(201).send({
       ...tokens,
       deviceId: created.deviceId,
@@ -222,7 +232,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     // otherwise the lockout itself becomes a CPU exhaustion vector.
     const lockState = await accountLockState(user?.id ?? null);
     if (lockState.locked) {
-      await audit(user!.id, null, "auth.login_locked", ip, { email });
+      await audit(user!.id, null, "auth.login_locked", ip); // F-26: user id suffices
       return sendThrottled(reply, lockState.retryAfterSeconds);
     }
 
@@ -364,6 +374,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/auth/devices", { preHandler: app.authenticate }, async (req, reply) => {
+    // F-24: name/platform/app_version are CLIENT-SUPPLIED labels (sanitised on
+    // write, length-capped by schema). Render them as untrusted user content.
     const rows = await query(
       `SELECT id, name, platform, app_version, trusted, revoked, first_seen, last_seen
          FROM devices WHERE user_id = $1 ORDER BY first_seen DESC`,

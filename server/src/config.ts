@@ -100,6 +100,13 @@ export const config: ServerConfig = {
   loginIpMax: Number(process.env.LOGIN_IP_MAX ?? 10),
 };
 
+// F-25: the API is not browser-facing. A wildcard CORS origin would let any
+// web page read authenticated responses the moment the tunnel serves one.
+// Explicit origins only; empty (the default) disables CORS entirely.
+if (config.corsOrigins.trim() === "*") {
+  throw new Error("CORS_ORIGINS must list explicit origins, never '*' (F-25)");
+}
+
 // Scrub the secrets from the process environment. From here on, a child
 // spawned with `...process.env` inherits the non-secret configuration but NOT
 // the signing key, the database password or the pepper.

@@ -59,7 +59,7 @@ object CertificatePinning {
         builder.certificatePinner(pinnerBuilder.build())
     }
 
-    private fun extractHost(url: String): String? {
+    internal fun extractHost(url: String): String? {
         val withoutScheme = url.substringAfter("://", url)
         val hostPort = withoutScheme.substringBefore("/").substringBefore("?")
         val host = hostPort.substringBeforeLast(":")

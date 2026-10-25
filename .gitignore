@@ -4,6 +4,7 @@ infra/.env
 infra/endpoint.json
 android/local.properties
 android/key.properties
+*.jks
 
 # ---- build output ----
 server/dist/

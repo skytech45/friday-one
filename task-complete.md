@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-25
 **Scope:** security remediation, P0 and P1 batches
-**State:** 13 commits, 3 tags, working tree clean, all suites green
+**State:** 15 commits, 3 tags, working tree clean, all suites green
 
 This file records what has actually been **built, executed and verified**.
 Anything not listed here is still open — see [`todo.md`](todo.md).
@@ -43,9 +43,83 @@ Every number below comes from a real run, not an estimate.
 
 ---
 
+## Findings batch 4 — F-14, F-15, F-17, F-21, F-24/F-25/F-26 (2026-10-25)
+
+### F-14 · Release APK signed with the debug key — **fixed**
+
+- A dedicated release keystore was generated **on the deployment host, outside
+  the repo**: `~/.android-keys/friday-release.jks` (RSA-4096, 10 000-day
+  validity, alias `friday`), with `key.properties` (0600) beside it. Gradle
+  loads it and signs `release` builds with it; a cold checkout without the
+  keystore still builds by falling back to the debug key (so CI stays green),
+  and `.gitignore` covers `*.jks`.
+- **Verified:** `FRIDAY-One-v0.7-release.apk` built from HEAD;
+  `apksigner verify --print-certs` shows `CN=FRIDAY One Release, O=knistudio` —
+  not the debug digest. The owner must back the keystore up off-host.
+
+### F-15 · Android had no tests — **partially fixed (JVM layer)**
+
+- New `android/app/src/test/` suite (pure JVM, no emulator): **22 tests**
+  across three classes.
+  - `CertificatePinningTest` — loopback exemption (incl. `[::1]`, casing, and
+    the `127.0.0.1.evil.example` trap) and host extraction (scheme/port/path).
+  - `TerminalUrlTest` — `jsString` escaping (`\`, `'`, `\n`, and the
+    break-out-of-literal injection shape) and `wsUrlFor` scheme upgrade.
+  - `JwtExpiryTest` — `isJwtExpiring` boundaries (skew window, no-`exp`,
+    garbage tokens fail safe).
+- Small testability refactors, behaviour-preserving: `isJwtExpiring` moved to a
+  top-level function taking `nowSeconds` (was a Context-bound private using
+  `android.util.Base64`; now `java.util.Base64`), `jsString`/`wsUrlFor`/
+  `extractHost` made `internal`.
+- **Verified:** `gradle :app:testReleaseUnitTest` — BUILD SUCCESSFUL. Still
+  open: instrumented tests (biometric gate, WebView origin policy) need a
+  device/emulator.
+
+### F-17 · Terminal sessions were unbounded — **fixed**
+
+- Server-wide cap of **5 concurrent terminals**; the 6th is refused with a
+  dedicated close code `4529`.
+- **Backpressure:** when the WebSocket send buffer exceeds 4 MB, the child's
+  output streams pause until the buffer drains under 1 MB — `cat bigfile` can
+  no longer buffer unbounded memory in the server.
+- **Idle timeout:** a session with no client input for 30 minutes is killed.
+- The session counter and idle timer are now released on the child-exit path
+  too (previously only the socket-close path cleaned up).
+- systemd: `MemoryMax=2G`, `TasksMax=256` on the API unit — terminal children
+  share the service cgroup, so the whole tree is bounded.
+- **Verified** (e2e §9a, now **74/74**): 5 open, 6th refused with 4529, and a
+  fresh terminal opens after the slots free (no counter leak).
+
+### F-21 · Vendored xterm.js without provenance — **fixed (as far as honestly possible)**
+
+- `assets/terminal/THIRD-PARTY.md` records upstream, licence, and SHA-256 for
+  every vendored file. **Recorded honestly: the exact upstream versions cannot
+  be identified from the minified bundles** — the file says so and directs the
+  next terminal change to re-vendor from a pinned tag.
+- The dangling `//# sourceMappingURL=…` comments (the `.map` files were never
+  vendored) are stripped.
+- `scripts/check-vendor-hashes.sh` asserts the hashes; wired into
+  `scripts/ci.sh` and the CI workflow.
+
+### F-24 / F-25 / F-26 · Small informational findings — **fixed**
+
+- F-24: device `name`/`platform`/`app_version` are sanitised on write (control
+  characters stripped, trimmed) and documented as client-supplied labels that
+  nothing authorises off.
+- F-25: the server **refuses to boot** with `CORS_ORIGINS=*`.
+- F-26: the owner's email is no longer duplicated into `audit_log.detail` on
+  register/login-locked (the row's `user_id` identifies the account;
+  `register_rejected` keeps the attempted address deliberately — there is no
+  user id for a rejected attempt), and `seed-owner.ts` no longer hardcodes a
+  personal display name.
+
+
+---
+
 ## Findings closed
 
-14 findings fixed, 0 partially fixed. Each entry names the evidence.
+21 findings fixed, 1 partially fixed (F-15: JVM tests only — instrumented tests
+need a device). Each entry names the evidence.
 
 ### F-02 · `FS_ROOTS` exposed the whole home directory — **fixed**
 

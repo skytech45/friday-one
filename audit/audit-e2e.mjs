@@ -413,6 +413,45 @@ say("\n=== 9. WebSocket terminal authentication ===");
   check("WS with an unknown terminal kind is closed (4400)", r5.closeCode === 4400, `closeCode=${r5.closeCode}`);
 }
 
+say("\n=== 9a. F-17: concurrent terminal cap ===");
+{
+  // Same probe as section 9's wsTest, which is scoped inside its block.
+  const wsTest = (url) =>
+    new Promise((resolve) => {
+      const ws = new WebSocket(url);
+      let opened = false;
+      let closeCode = null;
+      const done = () => resolve({ opened, closeCode });
+      const t = setTimeout(() => { try { ws.close(); } catch {} resolve({ opened, closeCode }); }, 6000);
+      ws.on("open", () => { opened = true; });
+      ws.on("close", (c) => { clearTimeout(t); closeCode = c; done(); });
+      ws.on("error", (e) => { clearTimeout(t); resolve({ opened, closeCode, error: e.message.slice(0, 60) }); });
+    });
+  // MAX_TERMINALS is 5 (server/src/routes/terminal.ts). Five live sessions
+  // must all open; the sixth must be refused with a dedicated close code; and
+  // after the sessions close, a slot must be free again (no counter leak).
+  const openHold = () =>
+    new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws/terminal?kind=shell&token=${ownerTok}`);
+      const t = setTimeout(() => { try { ws.close(); } catch {} resolve(null); }, 8000);
+      ws.on("open", () => { clearTimeout(t); resolve(ws); });
+      ws.on("close", () => { clearTimeout(t); resolve(null); });
+      ws.on("error", () => { clearTimeout(t); resolve(null); });
+    });
+  const held = [];
+  for (let i = 0; i < 5; i++) held.push(await openHold());
+  check("5 concurrent terminals open", held.every(Boolean), `opened=${held.filter(Boolean).length}/5`);
+
+  const sixth = await wsTest(`ws://127.0.0.1:${PORT}/ws/terminal?kind=shell&token=${ownerTok}`);
+  check("the 6th terminal is refused (4529)", sixth.closeCode === 4529, `closeCode=${sixth.closeCode}`);
+
+  held.forEach((w) => { try { w.close(); } catch {} });
+  await new Promise((r) => setTimeout(r, 800));
+  const after = await wsTest(`ws://127.0.0.1:${PORT}/ws/terminal?kind=shell&token=${ownerTok}`);
+  check("a terminal opens again after slots are freed (no counter leak)",
+    after.opened && after.closeCode === null, `opened=${after.opened} closeCode=${after.closeCode}`);
+}
+
 say("\n=== 9b. R-03: the access token is NOT written to the server log ===");
 {
   // The WS above already connected with a live token. The server journal must
