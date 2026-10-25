@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import os from "node:os";
 import fs from "node:fs";
 import { statfs } from "node:fs/promises";
+import { config } from "../config.js";
 import { query } from "../db.js";
 
 /**
@@ -185,7 +186,10 @@ async function disk(): Promise<{ total: number; used: number; avail: number; use
 }
 
 export async function systemRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/system", { preHandler: app.authenticate }, async (_req, reply) => {
+  // Full telemetry is host-sensitive: hostname, OS build, CPU model, mount
+  // layout, interface names/rates. It is for TRUSTED devices only (F-13) —
+  // an untrusted-but-authenticated device gets /system/summary instead.
+  app.get("/system", { preHandler: app.authenticateTrusted }, async (_req, reply) => {
     const now = cpuSample();
     const usage = pct(last, now);
     last = now;
@@ -248,11 +252,22 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
       net: netInfo,
       proc: {
         count: Number.isFinite(procs) ? procs : 0,
-        pid: process.pid,
-        rss: process.memoryUsage().rss,
+        // pid and rss intentionally omitted (F-13): the server's own PID and
+        // memory footprint are reconnaissance, not telemetry.
       },
       mounts,
       ts: Date.now(),
+    });
+  });
+
+  // Minimal liveness for devices that are authenticated but NOT trusted
+  // (F-13): enough for the app to show "server reachable", nothing about
+  // the host itself.
+  app.get("/system/summary", { preHandler: app.authenticate }, async (_req, reply) => {
+    return reply.send({
+      ok: true,
+      version: config.appVersion,
+      uptime_s: Math.round(process.uptime()),
     });
   });
 

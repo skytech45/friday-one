@@ -292,7 +292,15 @@ private fun MachineScreen(session: SessionStore, baseUrl: String) {
                 // raw bytes/s on a bursty link is a flat line with occasional spikes.
                 push(netHist, (((s.net.rx_Bps ?: 0.0) + (s.net.tx_Bps ?: 0.0)) / 1024.0)
                     .toFloat().coerceIn(0f, 4096f))
-            }.onFailure { error = it.message }
+            }.onFailure { e ->
+                // F-13: /system requires a trusted device. Say why, instead of
+                // a bare "HTTP 403" the owner can't act on.
+                error = if (e is retrofit2.HttpException && e.code() == 403) {
+                    "This device isn't trusted — approve it from a trusted device to see machine telemetry"
+                } else {
+                    e.message
+                }
+            }
             kotlinx.coroutines.delay(1000)
         }
     }

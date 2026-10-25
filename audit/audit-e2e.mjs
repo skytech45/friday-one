@@ -217,7 +217,19 @@ let secondTok;
   const fs = await get(`/fs/list?path=${ROOT}`, secondTok);
   check("untrusted device blocked from /fs/list (403)", fs.status === 403, `status=${fs.status}`);
   const sys = await get("/system", secondTok);
-  check("untrusted device ALLOWED on /system (authenticate only, no trust check)", sys.status === 200, `status=${sys.status}`);
+  check("untrusted device BLOCKED from /system (F-13: telemetry needs a trusted device)", sys.status === 403, `status=${sys.status} body=${JSON.stringify(sys.body)}`);
+  const sysLeak = JSON.stringify(sys.body) ?? "";
+  check("403 body leaks no host/platform/mount data", !sysLeak.includes("mounts") && !sysLeak.includes("hostname") && !sysLeak.includes("cpus"), sysLeak.slice(0, 120));
+  const summary = await get("/system/summary", secondTok);
+  check("untrusted device ALLOWED on /system/summary (200)", summary.status === 200, `status=${summary.status} body=${JSON.stringify(summary.body)}`);
+  check("/system/summary is minimal (ok/version/uptime only)", summary.status === 200
+    && summary.body?.ok === true
+    && typeof summary.body?.version === "string"
+    && typeof summary.body?.uptime_s === "number"
+    && Object.keys(summary.body).every((k) => ["ok", "version", "uptime_s"].includes(k)),
+    `keys=${Object.keys(summary.body ?? {}).join(",")}`);
+  const anonSummary = await get("/system/summary");
+  check("/system/summary without a token is 401", anonSummary.status === 401, `status=${anonSummary.status}`);
 }
 
 say("\n=== 5. refresh rotation, replay, and fingerprint binding ===");
@@ -323,7 +335,9 @@ say("\n=== 7c. R-08: a revoked device's access token stops working immediately =
   check("R-08: the target device got a device id", typeof rDid === "string" && rDid.length > 0,
     `deviceId=${rDid}`);
 
-  const before = await get("/system", rTok);
+  // /system/summary, not /system: the device is untrusted (F-13 gates full
+  // telemetry on trust), so summary is the right "does this token work" probe.
+  const before = await get("/system/summary", rTok);
   check("R-08: the device's access token works BEFORE revocation",
     before.status === 200, `status=${before.status}`);
 
