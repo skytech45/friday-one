@@ -1,7 +1,7 @@
 # FRIDAY One — Remaining Work
 
 **Last updated:** 2026-10-25
-**State:** 13 findings open, 1 partially closed, plus 2 operational blockers
+**State:** 12 findings open, plus 2 operational blockers
 **Rule:** each item ships with a regression test and is re-executed before it is
 called done. A fix that has only been described is not a fix.
 
@@ -90,36 +90,7 @@ that describes controls the binary does not have is itself a finding.
 
 ## P1 — real risk, no owner blocker
 
-### 3. F-11 (remainder) · Upgrade the JWT dependency
-
-The exploitable behaviours are already closed at the application layer. What
-remains is the vulnerable package itself: `fast-jwt@5.0.6` still carries
-advisories that `npm audit` reports as critical.
-
-**Do one of:**
-- `@fastify/jwt` 9.x → **10.2.5** (breaking: the `verify`/`sign` option shapes change), **or**
-- `"overrides": { "fast-jwt": "^6.3.4" }` in `package.json` if the major upgrade
-  cannot be taken now.
-
-**Verify:** `npm audit --omit=dev` reports 0 critical, **and**
-`audit/audit-algtest.mjs` still rejects all 15 variants, **and** the unit suite
-passes. The acceptance matrix is the safety net for this change — run it first.
-
-### 4. F-12 · Stop surfacing unlinked crash reports to the owner
-
-`GET /crash` uses `WHERE user_id = $1 OR user_id IS NULL`, and the write endpoint
-is deliberately unauthenticated — so anyone can inject content into the owner's
-console.
-
-**Do:** return unlinked reports only when the submitted fingerprint matches a
-known device, or put them in a separate unverified bucket; sanitise `message`
-and `stack_trace` on write (strip control characters, cap length).
-**Verify:** an unauthenticated report with no fingerprint does not appear in
-`GET /crash` for the owner.
-**Related:** F-23 — add a retention policy for unlinked reports and a delete
-endpoint.
-
-### 5. F-16 · Give the terminal a dedicated unprivileged account
+### 3. F-16 · Give the terminal a dedicated unprivileged account
 
 `NoNewPrivileges=true` is currently the single control between an authenticated
 session and root, and it only works because `sudo` is blocked. It does **not**
@@ -146,13 +117,14 @@ and the terminal still runs as `ubuntu`, so `HOME` redirection is not a boundary
 
 | # | Finding | Action |
 |---|---|---|
-| 6 | **F-20** | CI pipeline: `npm ci`, `npm audit --audit-level=high`, `tsc --noEmit`, the unit suite, `gitleaks`, Android lint + unit tests, and an `apksigner` release-signature assertion. Run `audit/audit-e2e.mjs` as an integration job — it is self-cleaning. |
-| 7 | **F-15** | Android tests. JVM: `DeviceIdentity` fingerprint stability, `CertificatePinning` loopback/apply decision, `SessionStore.isExpiring` boundaries, `jsString` escaping. Instrumented: biometric gate, WebView origin policy. `junit` is declared and unused today; there are no `src/test` or `src/androidTest` directories at all. |
-| 8 | **F-17** | Resource limits: cap concurrent terminal sessions, add a per-connection output budget, use `socket.pause()/resume()` for backpressure, and add `MemoryMax=` / `TasksMax=` to the systemd unit. |
-| 9 | **F-21** | Record the vendored `xterm.js` version and SHA-256 in `assets/terminal/THIRD-PARTY.md`, add a CI hash check, and ship or strip the `sourceMappingURL` comment (the map is absent). |
-| 10 | F-24 | Derive `platform` from the verified device key; render `name` as user-supplied. |
-| 11 | F-25 | Keep `CORS_ORIGINS` explicit and never `*`; document that the API is not browser-facing. |
-| 12 | F-26 | Stop storing the owner email in the audit `detail`; drop the hardcoded personal name in `seed-owner.ts`. |
+| 5 | **F-20** | CI pipeline: `npm ci`, `npm audit --audit-level=high`, `tsc --noEmit`, the unit suite, `gitleaks`, Android lint + unit tests, and an `apksigner` release-signature assertion. Run `audit/audit-e2e.mjs` as an integration job — it is self-cleaning. |
+| 6 | **F-15** | Android tests. JVM: `DeviceIdentity` fingerprint stability, `CertificatePinning` loopback/apply decision, `SessionStore.isExpiring` boundaries, `jsString` escaping. Instrumented: biometric gate, WebView origin policy. `junit` is declared and unused today; there are no `src/test` or `src/androidTest` directories at all. |
+| 7 | **F-17** | Resource limits: cap concurrent terminal sessions, add a per-connection output budget, use `socket.pause()/resume()` for backpressure, and add `MemoryMax=` / `TasksMax=` to the systemd unit. |
+| 8 | **F-21** | Record the vendored `xterm.js` version and SHA-256 in `assets/terminal/THIRD-PARTY.md`, add a CI hash check, and ship or strip the `sourceMappingURL` comment (the map is absent). |
+| 9 | F-24 | Derive `platform` from the verified device key; render `name` as user-supplied. |
+| 10 | F-25 | Keep `CORS_ORIGINS` explicit and never `*`; document that the API is not browser-facing. |
+| 11 | F-26 | Stop storing the owner email in the audit `detail`; drop the hardcoded personal name in `seed-owner.ts`. |
+| 12 | F-23 | Retention policy for unlinked crash reports and a delete endpoint. Unlinked reports are never served now (F-12 is done), but they still accumulate unbounded. |
 
 ---
 
@@ -187,7 +159,7 @@ These are not tasks I can complete unilaterally.
 
 1. **Keep `kind=shell` (a general `bash -l`) or remove it?**
    The roadmap deliberately does not remove it silently. Options: keep it and
-   isolate it properly (item 5), remove `shell` from `COMMANDS` and keep only
+   isolate it properly (item 3), remove `shell` from `COMMANDS` and keep only
    `hermes` and `opencode`, or require a second factor for that specific kind.
 2. **Keep `/auth/register` live, or provision only via `seed-owner.ts`?**
    Removing it eliminates a whole class of risk and lets the client drop its
@@ -203,7 +175,6 @@ These are not tasks I can complete unilaterally.
 |---|---|---|
 | 1 | F-14 | No owner input, no dependencies, immediate risk reduction. (F-09 is done — committed as `2bb194b`.) |
 | 2 | F-22 (needs DNS), then F-01 | Pins are meaningless without a stable hostname |
-| 3 | F-11 remainder, F-12 + F-23 | Server-side, covered by the existing e2e suite. (F-13 is done — committed as `b16d755`.) |
-| 4 | F-16, F-17 | Isolation and resource caps; touches the deployment |
-| 5 | F-20, F-15, F-21, F-24, F-25, F-26 | Hygiene; CI first so the rest is enforced |
-| 6 | RR-09, RR-05 | Operational, not code |
+| 3 | F-16, F-17 | Isolation and resource caps; touches the deployment. (F-11 and F-12 are done — commits `60e5b1f`, `5dfdb00`.) |
+| 4 | F-20, F-15, F-21, F-24, F-25, F-26 | Hygiene; CI first so the rest is enforced |
+| 5 | RR-09, RR-05 | Operational, not code |

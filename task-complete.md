@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-25
 **Scope:** security remediation, P0 and P1 batches
-**State:** 7 commits, 3 tags, working tree clean, all suites green
+**State:** 9 commits, 3 tags, working tree clean, all suites green
 
 This file records what has actually been **built, executed and verified**.
 Anything not listed here is still open — see [`todo.md`](todo.md).
@@ -17,7 +17,7 @@ Every number below comes from a real run, not an estimate.
 |---|---|
 | `npx tsc --noEmit` | **clean**, 0 errors |
 | `npx tsx --test test/*.test.ts` | **20/20** pass (2 suites) |
-| `audit/audit-e2e.mjs` | **63/63** checks pass |
+| `audit/audit-e2e.mjs` | **71/71** checks pass |
 | `audit/audit-f09.mjs` | **16/16** checks pass |
 | `audit/audit-r02.mjs` | **5/5** pass |
 | `audit/audit-r07.mjs` | **5/5** pass |
@@ -36,12 +36,14 @@ Every number below comes from a real run, not an estimate.
 | `1fd01a0` | — | Audit status recorded in the report set |
 | `2bb194b` | — | Least-privilege database role (F-09) |
 | `b16d755` | — | `/system` telemetry gated on device trust (F-13) |
+| `60e5b1f` | — | `@fastify/jwt` 10.2.5 / `fast-jwt` 6.3.5, `zod` 4.6.7 (F-11 remainder) |
+| `5dfdb00` | — | Unlinked crash reports hidden from the console, writes sanitised (F-12) |
 
 ---
 
 ## Findings closed
 
-12 findings fixed, 1 partially fixed. Each entry names the evidence.
+14 findings fixed, 0 partially fixed. Each entry names the evidence.
 
 ### F-02 · `FS_ROOTS` exposed the whole home directory — **fixed**
 
@@ -156,7 +158,7 @@ The path jail was already correct; the configured root was not.
   on the database or schema `public`; DML present on all six app tables; and
   `migrate.ts` still runs to completion as the bootstrap role.
 - **Full e2e suite re-run on the new wiring:** 59/59 at the time of the commit
-  (63/63 after the F-13 additions below).
+  (71/71 after the F-13/F-12 additions below).
 
 ### F-13 · An untrusted device received full host telemetry — **fixed**
 
@@ -178,11 +180,38 @@ The path jail was already correct; the configured root was not.
   owner device. The R-08 pre-revocation probe moved to `/system/summary`, since
   the test device there is deliberately untrusted.
 
+### F-11 · `fast-jwt` advisories — **fixed**
 
-- The **exploitable behaviours** are closed: algorithms pinned, `crit` rejected,
-  array payloads rejected, `exp` required.
-- The **dependency** is still `fast-jwt@5.0.6`; the upgrade to `@fastify/jwt@10.x`
-  (or a `fast-jwt` override) is **not done**. Tracked in `todo.md`.
+The exploitable behaviours were closed at the application layer in the first
+remediation batch (algorithms pinned, `crit` rejected, array payloads rejected,
+`exp` required). The vulnerable dependency itself is now gone:
+
+- `@fastify/jwt` **9.1.0 → 10.2.5**, pulling `fast-jwt` **5.0.6 → 6.3.5** —
+  every critical fast-jwt advisory is closed. The v10 breaking change (claims in
+  array format now fail verification) is a no-op here: `assertTokenClaims`
+  already rejects array payloads and non-string `sub`/`did`.
+- `zod` **3.23 → 4.6.7**, closing the high-severity memory-exhaustion advisory.
+  Only code change required: `z.record(z.string(), z.unknown())` in `crash.ts`
+  (zod 4 requires an explicit key schema).
+- **Verified:** `npm audit --omit=dev` reports **0 vulnerabilities**;
+  `tsc --noEmit` clean; 20/20 unit tests; 71/71 e2e checks including the JWT
+  variant matrix (HS384/HS512 with the real secret → 401, `crit` header → 401).
+
+### F-12 · Unauthenticated crash reports reached the owner's console — **fixed**
+
+- `GET /crash` no longer serves unlinked reports: the query is `WHERE user_id =
+  $1` only. A report with no fingerprint, or one whose fingerprint matches no
+  known device, is still stored (it may be a real crash from a broken install)
+  but is never handed to the console — previously anyone on the internet could
+  inject content into it.
+- Writes are sanitised at the boundary: `message` and `stack_trace` have control
+  characters stripped (NUL, ANSI/C1 escape sequences) with `\n`/`\t` preserved,
+  and are length-capped in the route, not just in the schema. The dedupe
+  signature is computed from the sanitised text.
+- **Verified** (8 new checks in `audit-e2e.mjs` §13b): an injected
+  no-fingerprint report does **not** appear in the owner's `GET /crash`; a
+  report carrying the owner's device fingerprint does; a report containing ANSI
+  escapes and NULs is stored with them stripped.
 
 ### F-18 · `ws` was an undeclared dependency — **fixed**
 
@@ -230,7 +259,7 @@ Shared helpers: `spawnGrouped` / `killGroup` (kill the whole process group),
 
 | File | Covers |
 |---|---|
-| `audit/audit-e2e.mjs` | 63 end-to-end checks across auth, files, WS, revocation |
+| `audit/audit-e2e.mjs` | 71 end-to-end checks across auth, files, WS, revocation, crash scope |
 | `audit/audit-f09.mjs` | 16 checks: the app role is least-privilege and migrations still work |
 | `audit/audit-r02.mjs` | Fail-closed registration (F-04) |
 | `audit/audit-r07.mjs` | Client-IP spoofing and the account lockout (F-05) |

@@ -15,9 +15,9 @@ The severity figures above describe the state **at audit time**. Since then, the
 P0 and most of the P1 batch has been implemented, committed and re-verified.
 `findings.json` carries the machine-readable status of every finding.
 
-**Closed — 12 findings:** F-02, F-03, F-04, F-05, F-06, F-07, F-08, F-09, F-10, F-13, F-18, F-19
-**Partially closed — 1:** F-11 (the exploitable behaviours are fixed; the `fast-jwt` upgrade is still open)
-**Open — 13:** F-01, F-12, F-14, F-15, F-16, F-17, F-20, F-21, F-22, F-23, F-24, F-25, F-26
+**Closed — 14 findings:** F-02, F-03, F-04, F-05, F-06, F-07, F-08, F-09, F-10, F-11, F-12, F-13, F-18, F-19
+The upgrade debt behind the one partially-closed finding (F-11) is closed too.
+**Open — 12:** F-01, F-14, F-15, F-16, F-17, F-20, F-21, F-22, F-23, F-24, F-25, F-26
 
 | Commit | Scope |
 |---|---|
@@ -27,9 +27,11 @@ P0 and most of the P1 batch has been implemented, committed and re-verified.
 | `87d5e37` | P1: secrets out of the process environment, terminal child env allowlist |
 | `2bb194b` | P0: least-privilege friday_app database role; migrations moved to a bootstrap-only MIGRATE_DATABASE_URL (F-09) |
 | `b16d755` | P1: /system gated on device trust, minimal /system/summary, proc.pid/proc.rss dropped (F-13) |
+| `60e5b1f` | P1: @fastify/jwt 10.2.5 / fast-jwt 6.3.5, zod 4.6.7 — npm audit clean (F-11) |
+| `5dfdb00` | P1: unlinked crash reports hidden from the console, writes sanitised (F-12) |
 
 **Verification at each commit:** `tsc --noEmit` clean · 20/20 unit tests ·
-63/63 end-to-end checks · 5/5 R-02 · 5/5 R-07 · 7/7 R-09.
+71/71 end-to-end checks · 5/5 R-02 · 5/5 R-07 · 7/7 R-09.
 
 The individual finding sections below keep their **original** status so the
 audit record stays a faithful snapshot of what was found. Read this section for
@@ -40,8 +42,7 @@ what is still outstanding.
 1. **F-14** — the release APK is still debug-signed. Do this before distributing any build.
 2. **F-01** — the Android security layer is still dead code (no biometric gate, no pinning, no device binding). Blocked on F-22 (a stable hostname) for the pins to be meaningful.
 3. **F-22** — the tunnel is down and discovery is still unauthenticated.
-4. **F-12** — crash-report read scope (the telemetry gap is closed).
-5. **F-20, F-15** — no CI, and no Android tests.
+4. **F-20, F-15** — no CI, and no Android tests.
 
 ---
 

@@ -335,7 +335,7 @@
       "title": "Two critical advisories in the JWT verification chain",
       "severity": "medium",
       "confidence": "confirmed",
-      "status": "partially-fixed",
+      "status": "fixed",
       "cwe": "CWE-1395",
       "cvss41": 5.9,
       "components": [
@@ -363,7 +363,7 @@
       "title": "Unauthenticated crash-report injection into the owner's console",
       "severity": "medium",
       "confidence": "confirmed",
-      "status": "open",
+      "status": "fixed",
       "cwe": "CWE-20",
       "cvss41": 4.3,
       "components": [
