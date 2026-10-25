@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -254,6 +255,7 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
     var loadError by remember { mutableStateOf<String?>(null) }
     var enrollment by remember { mutableStateOf<com.friday.one.data.EnrollmentInfo?>(null) }
     var chatServer by remember { mutableStateOf<CloudServer?>(null) }
+    var securityOpen by remember { mutableStateOf(false) }
     val client = remember { ControlPlaneClient() }
 
     suspend fun reload() {
@@ -271,6 +273,15 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
         return
     }
 
+    if (securityOpen) {
+        SecurityView(
+            accessToken = session.accessToken,
+            servers = servers ?: emptyList(),
+            onBack = { securityOpen = false; scope.launch { reload() } },
+        )
+        return
+    }
+
     Column(Modifier.fillMaxSize().background(Dash.Bg).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -279,6 +290,9 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
             }
             TextButton(onClick = onSignedOut) {
                 Text("Sign out", color = Dash.Bad, fontSize = 12.sp)
+            }
+            IconButton(onClick = { securityOpen = true }) {
+                Icon(Icons.Outlined.Security, "security", tint = Dash.Accent)
             }
         }
         Spacer(Modifier.height(8.dp))

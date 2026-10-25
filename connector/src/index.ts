@@ -11,7 +11,7 @@
  */
 import { loadConfig, readCredential } from "./config.js";
 import { enroll } from "./enroll.js";
-import { decide, loadPolicy, type LocalPolicy } from "./policy.js";
+import { decide } from "./policy.js";
 import { AcpAgent } from "./acp.js";
 import { GatewayConnection } from "./gateway.js";
 
@@ -62,13 +62,20 @@ async function handleDispatch(
     return failJob("root_not_allowed");
   }
 
-  // The POLICY GATE — final local authority, fail closed. Rechecked here even
-  // though the gateway authorized ownership: network auth ≠ execution auth.
-  let policy: LocalPolicy | null = null;
+  // POLICY (plan v2 §10): fetch the EFFECTIVE rules from the control plane
+  // immediately before execution — network auth is not execution auth, and a
+  // policy service that cannot be reached fails CLOSED.
+  let policy: import("./policy.js").LocalPolicy | null = null;
   try {
-    policy = loadPolicy(cfg.policyDir);
+    const res = await fetch(`${cfg.controlPlaneUrl}/api/v1/policies/sync`, {
+      headers: { "x-connector-credential": readCredential(cfg.credentialFile) },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`sync ${res.status}`);
+    policy = (await res.json()) as import("./policy.js").LocalPolicy;
   } catch {
-    /* fail closed below */
+    conn!.emit("command.failed", { job_id: jobId, reason: "policy_unavailable" }, env.message_id);
+    return;
   }
   const decision = decide(policy, {
     agentId: null,
@@ -150,14 +157,9 @@ async function main(): Promise<void> {
       console.warn("[config] FRIDAY_GATEWAY_URL not set: running disconnected");
     }
 
-    // Policy file presence is a startup assertion: the gate must have
-    // SOMETHING to enforce, even an empty rule set, or we fail closed loudly.
-    try {
-      const policy = loadPolicy(cfg.policyDir);
-      console.log(`policy loaded: v${policy.version}, ${policy.rules.length} rule(s)`);
-    } catch {
-      console.warn(`no policy file under ${cfg.policyDir}: fail-closed defaults apply`);
-    }
+    // Policy is REMOTE now (fetched per-dispatch, fail closed). The local
+    // policyDir remains only as boot diagnostics for offline debugging.
+    console.log("policy mode: remote sync per dispatch (fail closed)");
     return;
   }
 

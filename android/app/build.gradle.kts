@@ -25,8 +25,8 @@ android {
         applicationId = "com.friday.one"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
         // v2 cloud stack. Publishable key is public by design; authorization
         // is server-side (RLS + control-plane verification).
         val supabaseUrl = (project.findProperty("SUPABASE_URL") as String?)

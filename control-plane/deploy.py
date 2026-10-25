@@ -25,11 +25,17 @@ FILES = [
     "api/v1/enrollments/index.ts",
     "api/v1/enrollments/session.ts",
     "api/v1/enrollments/[id]/claim.ts",
+    "api/v1/policies/index.ts",
+    "api/v1/policies/sync.ts",
+    "api/v1/policies/[id].ts",
+    "api/v1/jobs.ts",
+    "api/v1/audit.ts",
     "lib/env.ts",
     "lib/util.ts",
     "lib/auth.ts",
     "lib/supabase.ts",
     "lib/enrollments.ts",
+    "lib/policies.ts",
 ]
 
 ENV_VARS = {
