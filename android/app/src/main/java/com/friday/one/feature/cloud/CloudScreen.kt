@@ -37,14 +37,45 @@ fun CloudScreen(auth: SupabaseAuth) {
     val scope = rememberCoroutineScope()
     var session by remember { mutableStateOf<com.friday.one.data.CloudSession?>(null) }
     var checking by remember { mutableStateOf(true) }
+    var showRegister by remember { mutableStateOf(false) }
+    var googleError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) { session = auth.current(); checking = false }
+    // Google OAuth deep link: fridayone://auth-callback?code=...
+    LaunchedEffect(Unit) {
+        auth.current()?.let { session = it }
+        checking = false
+        com.friday.one.data.AuthCallbacks.googleRedirect.collect { uri ->
+            if (uri != null) {
+                com.friday.one.data.AuthCallbacks.googleRedirect.value = null
+                val code = uri.getQueryParameter("code")
+                val err = uri.getQueryParameter("error_description") ?: uri.getQueryParameter("error")
+                when {
+                    code != null -> scope.launch {
+                        runCatching { auth.completeGoogle(code) }
+                            .onSuccess { session = it }
+                            .onFailure { googleError = it.message }
+                    }
+                    err != null -> googleError = err
+                }
+            }
+        }
+    }
 
     when {
         checking -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = Dash.Accent)
         }
-        session == null -> LoginView(auth) { s -> scope.launch { auth.save(s); session = s } }
+        session == null && showRegister -> RegisterView(
+            auth,
+            onRegistered = { s -> session = s },
+            onBack = { showRegister = false },
+        )
+        session == null -> LoginView(
+            auth,
+            onSignedIn = { s -> session = s },
+            onRegister = { showRegister = true },
+            googleError = googleError,
+        )
         else -> DashboardView(auth, session!!, onSignedOut = {
             scope.launch { auth.clear() }
             session = null
@@ -53,24 +84,52 @@ fun CloudScreen(auth: SupabaseAuth) {
 }
 
 @Composable
-private fun LoginView(auth: SupabaseAuth, onSignedIn: (com.friday.one.data.CloudSession) -> Unit) {
+private fun LoginView(
+    auth: SupabaseAuth,
+    onSignedIn: (com.friday.one.data.CloudSession) -> Unit,
+    onRegister: () -> Unit,
+    googleError: String?,
+) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var mode by remember { mutableStateOf("signin") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     Column(
         Modifier.fillMaxSize().background(Dash.Bg).verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.Center,
     ) {
         Text("FRIDAY One", color = Dash.Text, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Text("Sign in to your cloud", color = Dash.Dim, fontSize = 12.sp)
+        Text("Your servers, from anywhere", color = Dash.Dim, fontSize = 12.sp)
         Spacer(Modifier.height(24.dp))
+
+        Button(
+            onClick = {
+                // Custom Tab -> Supabase authorize -> fridayone://auth-callback.
+                // If Google isn't enabled yet, Supabase shows a setup error page.
+                val intent = android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(auth.googleAuthorizeUrl()),
+                )
+                runCatching { context.startActivity(intent) }
+                    .onFailure { error = "no browser available" }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Continue with Google") }
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f).height(1.dp).background(Dash.Card))
+            Text("  or  ", color = Dash.Dim, fontSize = 11.sp)
+            Box(Modifier.weight(1f).height(1.dp).background(Dash.Card))
+        }
+        Spacer(Modifier.height(12.dp))
+
         OutlinedTextField(
             value = email, onValueChange = { email = it }, label = { Text("Email") },
             singleLine = true, modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             colors = cloudFieldColors(),
         )
         Spacer(Modifier.height(10.dp))
@@ -86,18 +145,103 @@ private fun LoginView(auth: SupabaseAuth, onSignedIn: (com.friday.one.data.Cloud
             onClick = {
                 busy = true; error = null
                 scope.launch {
-                    val r = if (mode == "signin") auth.login(email, password) else auth.signup(email, password)
-                    r.onSuccess(onSignedIn).onFailure { error = it.message ?: "failed" }
+                    runCatching { auth.login(email.trim(), password) }
+                        .onSuccess(onSignedIn)
+                        .onFailure { error = it.message ?: "failed" }
                     busy = false
                 }
             },
-            enabled = !busy && email.isNotBlank() && password.length >= 8,
+            enabled = !busy && email.isNotBlank() && password.isNotEmpty(),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "…" else if (mode == "signin") "Sign in" else "Create account") }
-        TextButton(onClick = { mode = if (mode == "signin") "signup" else "signin" }) {
-            Text(if (mode == "signin") "No account? Create one" else "Have an account? Sign in",
-                color = Dash.Dim, fontSize = 12.sp)
+        ) { Text(if (busy) "…" else "Sign in") }
+        TextButton(onClick = onRegister) {
+            Text("New here? Create an account", color = Dash.Accent, fontSize = 12.sp)
         }
+        (error ?: googleError)?.let { Text(it, color = Dash.Bad, fontSize = 12.sp) }
+    }
+}
+
+/** Plan v2 §10: dedicated register-new-user page. */
+@Composable
+private fun RegisterView(
+    auth: SupabaseAuth,
+    onRegistered: (com.friday.one.data.CloudSession) -> Unit,
+    onBack: () -> Unit,
+) {
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    val pwOk = password.length >= 8
+    val match = password.isNotEmpty() && password == confirm
+    val emailOk = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+
+    Column(
+        Modifier.fillMaxSize().background(Dash.Bg).verticalScroll(rememberScrollState()).padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, null, tint = Dash.Text)
+            }
+            Text("Create account", color = Dash.Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Email + password. You can also use Google later.", color = Dash.Dim, fontSize = 11.sp)
+        Spacer(Modifier.height(20.dp))
+        OutlinedTextField(
+            value = email, onValueChange = { email = it }, label = { Text("Email") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            isError = email.isNotBlank() && !emailOk,
+            supportingText = {
+                if (email.isNotBlank() && !emailOk) Text("enter a valid email", color = Dash.Bad, fontSize = 11.sp)
+            },
+            colors = cloudFieldColors(),
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = password, onValueChange = { password = it }, label = { Text("Password (min 8)") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+            visualTransformation = PasswordVisualTransformation(),
+            isError = password.isNotEmpty() && !pwOk,
+            colors = cloudFieldColors(),
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = confirm, onValueChange = { confirm = it }, label = { Text("Confirm password") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+            visualTransformation = PasswordVisualTransformation(),
+            isError = confirm.isNotEmpty() && !match,
+            supportingText = {
+                if (confirm.isNotEmpty() && !match) Text("passwords don't match", color = Dash.Bad, fontSize = 11.sp)
+            },
+            colors = cloudFieldColors(),
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = {
+                busy = true; error = null; notice = null
+                scope.launch {
+                    when (val r = runCatching { auth.register(email.trim(), password) }.getOrElse { e ->
+                        error = e.message; null
+                    }) {
+                        is com.friday.one.data.SignupOutcome.SignedIn -> onRegistered(r.session)
+                        com.friday.one.data.SignupOutcome.NeedsEmailConfirmation -> {
+                            notice = "Account created — check your email and confirm, then sign in."
+                        }
+                        null -> Unit
+                    }
+                    busy = false
+                }
+            },
+            enabled = !busy && emailOk && pwOk && match,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (busy) "…" else "Create account") }
+        notice?.let { Text(it, color = Dash.Accent, fontSize = 12.sp) }
         error?.let { Text(it, color = Dash.Bad, fontSize = 12.sp) }
     }
 }
