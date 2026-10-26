@@ -66,15 +66,15 @@ Validation rules (gateway and connector, both directions):
 |---|---|---|---|
 | `auth.connector` | C→G | `{ credential }` | first message after open; hash-checked against `connector_credentials` |
 | `auth.resume` | C→G / A→G | `{ last_sequence }` | after reconnect |
-| `connector.hello` | C→G | `{ connector_version, agents: [AgentInfo] }` | AgentInfo carries the adapter's declared capabilities |
+| `connector.hello` | C→G | `{ connector_version, agents: [AgentInfo], projects: [{ root, label }] }` | sent after `auth.resume.ok` and again when a version is learned; gateway upserts `agents` + `projects` scoped to the credential's server |
 | `connector.heartbeat` | C→G | `{ uptime_s }` | gateway updates `servers.last_seen_at` |
-| `agent.discovered` | C→G | `{ agent_id, adapter, version, capabilities }` | capability registry update |
+| `agent.discovered` | C→G | `{ agent_id, adapter, version, capabilities }` | reserved for incremental registry updates; `connector.hello` is the bulk path |
 | `session.updated` | C→G | `{ session }` | status transitions only; content is pull/chat |
-| `chat.delta` | C→G | `{ delta, seq }` | streamed token/output deltas; bounded size |
+| `chat.delta` | C→G | `{ delta, seq, agent }` | streamed token/output deltas; bounded size |
 | `terminal.output` | C→G | `{ chunk, seq }` | legacy PTY bridge; bounded, backpressured |
 | `permission.requested` | C→G | `{ operation, payload_hash, policy_version, expires_at, context }` | persisted BEFORE the app is notified |
 | `permission.decided` | G→C | `{ request_id, decision, decided_by, decided_at }` | connector revalidates locally before executing |
-| `command.submit` | A→G | `{ operation, arguments, idempotency_key, expires_at }` | structured operation, NEVER a shell string |
+| `command.submit` | A→G | `{ operation, arguments, idempotency_key, expires_at }` | structured operation, NEVER a shell string; `arguments.agent` selects a reported adapter, unknown → `command.rejected{agent_not_available}` |
 | `command.accepted` / `command.started` | C→G | `{ job_id }` | acks with explicit state transitions |
 | `command.completed` / `command.failed` | C→G | `{ job_id, result_summary }` | bounded summary; big output stays on the connector |
 | `command.cancel` | A→G | `{ job_id }` | idempotent; cancelled jobs never resume |

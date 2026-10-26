@@ -346,6 +346,13 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
                                     if (s.online) "online" else s.enrollmentState,
                                     color = if (s.online) Dash.Accent else Dash.Dim, fontSize = 11.sp,
                                 )
+                                if (s.agents.isNotEmpty()) {
+                                    Text(
+                                        s.agents.joinToString(", ") { it.adapter } +
+                                            " · ${s.projects.size} root(s)",
+                                        color = Dash.Dim, fontSize = 10.sp,
+                                    )
+                                }
                             }
                         }
                     }
@@ -467,6 +474,17 @@ private fun ChatView(
     var status by remember { mutableStateOf("connecting…") }
     var pendingJob by remember { mutableStateOf<String?>(null) }
     var pendingPerm by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // Capability-driven pickers (plan §9): populated from what the connector
+    // reported, with a safe fallback so an older connector still works.
+    val selectableAgents = remember(server.id) {
+        server.agents.filter { it.health == "healthy" }.ifEmpty { server.agents }
+    }
+    var selectedAgent by remember(server.id) {
+        mutableStateOf(selectableAgents.firstOrNull()?.adapter)
+    }
+    var selectedRoot by remember(server.id) {
+        mutableStateOf(server.projects.firstOrNull()?.root ?: "/tmp/friday-acp-test")
+    }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(server.id) {
@@ -487,6 +505,10 @@ private fun ChatView(
                     messages = messages + Pair("✗ failed: ${ev.reason}", false)
                     pendingJob = null
                 }
+                is GatewayEvent.Rejected -> {
+                    messages = messages + Pair("✗ rejected: ${ev.reason}", false)
+                    pendingJob = null
+                }
                 is GatewayEvent.PermissionRequested -> {
                     pendingPerm = ev.requestId to ev.operation
                 }
@@ -502,6 +524,46 @@ private fun ChatView(
             Column {
                 Text(server.name, color = Dash.Text, fontWeight = FontWeight.SemiBold)
                 Text(status, color = if (status == "online") Dash.Accent else Dash.Dim, fontSize = 11.sp)
+            }
+        }
+        if (selectableAgents.size > 1) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Agent", color = Dash.Dim, fontSize = 11.sp)
+                selectableAgents.forEach { a ->
+                    FilterChip(
+                        selected = selectedAgent == a.adapter,
+                        onClick = { selectedAgent = a.adapter },
+                        label = {
+                            Text(
+                                a.adapter.replaceFirstChar { it.uppercase() } +
+                                    (a.version?.let { " · $it" } ?: ""),
+                                fontSize = 11.sp,
+                            )
+                        },
+                    )
+                }
+            }
+        }
+        if (server.projects.size > 1) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Project", color = Dash.Dim, fontSize = 11.sp)
+                server.projects.forEach { p ->
+                    FilterChip(
+                        selected = selectedRoot == p.root,
+                        onClick = { selectedRoot = p.root },
+                        label = {
+                            Text((p.label ?: p.root).take(18), fontSize = 11.sp)
+                        },
+                    )
+                }
             }
         }
         LazyColumn(Modifier.weight(1f).padding(horizontal = 12.dp)) {
@@ -541,8 +603,11 @@ private fun ChatView(
                     messages = messages + Pair(text, true)
                     val corr = java.util.UUID.randomUUID().toString()
                     scope.launch {
-                        // The chat root: the connector enforces containment + policy.
-                        val ok = client.submitPrompt(server.id, "/tmp/friday-acp-test", text, corr)
+                        // Root + agent are the connector's enforced boundary:
+                        // it validates both again before execution.
+                        val ok = client.submitPrompt(
+                            server.id, selectedRoot, text, corr, selectedAgent,
+                        )
                         if (!ok) messages = messages + Pair("✗ not connected", false)
                     }
                 },

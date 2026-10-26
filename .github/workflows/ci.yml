@@ -24,6 +24,10 @@ jobs:
         working-directory: ${{ matrix.component }}
       - run: npx tsc --noEmit
         working-directory: ${{ matrix.component }}
+      - name: unit tests
+        if: matrix.component == 'gateway' || matrix.component == 'connector'
+        run: npm test
+        working-directory: ${{ matrix.component }}
       - name: connector bundle builds
         if: matrix.component == 'connector'
         run: bash build-release.sh 0.0.0-ci
@@ -39,6 +43,7 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      - run: gradle -p android :app:testDebugUnitTest --console=plain
       - run: gradle -p android :app:assembleRelease --console=plain
 
   gitleaks:

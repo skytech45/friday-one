@@ -20,7 +20,20 @@ data class CloudServer(
     val name: String,
     val enrollmentState: String,
     val online: Boolean,
+    /** Agents the connector reported on its last capability sync. */
+    val agents: List<CloudAgent> = emptyList(),
+    /** Project roots the connector is allowed to work in. */
+    val projects: List<CloudProject> = emptyList(),
 )
+
+data class CloudAgent(
+    val id: String,
+    val adapter: String,
+    val version: String?,
+    val health: String,
+)
+
+data class CloudProject(val id: String, val root: String, val label: String?)
 
 data class EnrollmentInfo(
     val enrollmentId: String,
@@ -56,14 +69,7 @@ class ControlPlaneClient {
         .build()
 
     suspend fun listServers(accessToken: String): List<CloudServer> = withContext(Dispatchers.IO) {
-        val arr = getArray(accessToken, "/api/v1/servers", "servers")
-        arr.map { obj ->
-            CloudServer(
-                id = obj.s("id"), name = obj.s("name"),
-                enrollmentState = obj.s("enrollment_state"),
-                online = obj.s("online") == "true",
-            )
-        }
+        getArray(accessToken, "/api/v1/servers", "servers").map(::parseServer)
     }
 
     /** v2 enrollment: returns enrollment id + one-time install token. */
@@ -199,5 +205,33 @@ class ControlPlaneClient {
         http.newCall(req).execute().use { if (!it.isSuccessful) error("patch failed (${it.code})") }
     }
 
+    /** Dashboard row + discovered capabilities. Pure so it is unit-tested. */
+    internal fun parseServer(obj: JsonObject): CloudServer = CloudServer(
+        id = obj.s("id"), name = obj.s("name"),
+        enrollmentState = obj.s("enrollment_state"),
+        online = obj.s("online") == "true",
+        agents = obj.array("agents").mapNotNull { a ->
+            val id = a.s("id")
+            val adapter = a.s("adapter")
+            if (id.isEmpty() || adapter.isEmpty()) null
+            else CloudAgent(id, adapter, a.sOrNull("version"), a.s("health"))
+        },
+        projects = obj.array("projects").mapNotNull { p ->
+            val root = p.s("root")
+            if (root.isEmpty()) null
+            else CloudProject(p.s("id"), root, p.sOrNull("label"))
+        },
+    )
+
     private fun JsonObject.s(k: String): String = this[k]?.toString()?.trim('"') ?: ""
+
+    private fun JsonObject.sOrNull(k: String): String? {
+        val v = this[k] ?: return null
+        if (v is kotlinx.serialization.json.JsonNull) return null
+        return v.toString().trim('"').ifEmpty { null }
+    }
+
+    private fun JsonObject.array(k: String): List<JsonObject> =
+        (this[k] as? kotlinx.serialization.json.JsonArray)
+            ?.mapNotNull { it as? JsonObject } ?: emptyList()
 }

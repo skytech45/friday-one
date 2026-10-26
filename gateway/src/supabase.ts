@@ -112,6 +112,67 @@ export async function findQueuedJob(jobId: string): Promise<CommandJobRow | null
   return rows[0] ?? null;
 }
 
+export interface AgentRow {
+  id: string;
+  server_id: string;
+  adapter: string;
+}
+
+/**
+ * Upsert discovered agents (plan §7/§9). Scoped by the connector's own
+ * server id — never a payload-supplied server. Uniqueness is
+ * (server_id, adapter), so re-reporting refreshes health/version in place.
+ */
+export async function upsertAgents(
+  serverId: string,
+  agents: Array<{ adapter: string; version: string | null; health: string }>,
+): Promise<void> {
+  if (agents.length === 0) return;
+  const now = new Date().toISOString();
+  await rest("POST", "agents", {
+    body: agents.map((a) => ({
+      server_id: serverId,
+      adapter: a.adapter,
+      adapter_version: a.version,
+      capabilities: {},
+      health: a.health,
+      discovered_at: now,
+      updated_at: now,
+    })),
+    query: { on_conflict: "server_id,adapter" },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+}
+
+/** Resolve an adapter name to its durable agent row for THIS server. */
+export async function findAgent(serverId: string, adapter: string): Promise<AgentRow | null> {
+  const rows = await rest<AgentRow>("GET", "agents", {
+    query: { server_id: `eq.${serverId}`, adapter: `eq.${adapter}` },
+  });
+  return rows[0] ?? null;
+}
+
+/**
+ * Record the connector's allowed project roots so the app can offer a
+ * selector. The connector still enforces containment locally before any
+ * execution; this table is descriptive, not authoritative.
+ */
+export async function upsertProjects(
+  serverId: string,
+  projects: Array<{ root: string; label: string | null }>,
+): Promise<void> {
+  if (projects.length === 0) return;
+  await rest("POST", "projects", {
+    body: projects.map((p) => ({
+      server_id: serverId,
+      canonical_root: p.root,
+      label: p.label,
+    })),
+    query: { on_conflict: "server_id,canonical_root" },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+}
+
 export interface PermissionRequestRow {
   id: string;
   server_id: string;

@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "FRIDAY Connector — runs on each enrolled server. Outbound WSS to the realtime gateway; the local execution gate.",
+  "description": "FRIDAY Connector \u2014 runs on each enrolled server. Outbound WSS to the realtime gateway; the local execution gate.",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts"
   },
   "dependencies": {
     "qrcode": "^1.5.4",

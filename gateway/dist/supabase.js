@@ -81,6 +81,54 @@ export async function findQueuedJob(jobId) {
     const rows = await rest("GET", "command_jobs", { query: { id: `eq.${jobId}` } });
     return rows[0] ?? null;
 }
+/**
+ * Upsert discovered agents (plan §7/§9). Scoped by the connector's own
+ * server id — never a payload-supplied server. Uniqueness is
+ * (server_id, adapter), so re-reporting refreshes health/version in place.
+ */
+export async function upsertAgents(serverId, agents) {
+    if (agents.length === 0)
+        return;
+    const now = new Date().toISOString();
+    await rest("POST", "agents", {
+        body: agents.map((a) => ({
+            server_id: serverId,
+            adapter: a.adapter,
+            adapter_version: a.version,
+            capabilities: {},
+            health: a.health,
+            discovered_at: now,
+            updated_at: now,
+        })),
+        query: { on_conflict: "server_id,adapter" },
+        prefer: "resolution=merge-duplicates,return=minimal",
+    });
+}
+/** Resolve an adapter name to its durable agent row for THIS server. */
+export async function findAgent(serverId, adapter) {
+    const rows = await rest("GET", "agents", {
+        query: { server_id: `eq.${serverId}`, adapter: `eq.${adapter}` },
+    });
+    return rows[0] ?? null;
+}
+/**
+ * Record the connector's allowed project roots so the app can offer a
+ * selector. The connector still enforces containment locally before any
+ * execution; this table is descriptive, not authoritative.
+ */
+export async function upsertProjects(serverId, projects) {
+    if (projects.length === 0)
+        return;
+    await rest("POST", "projects", {
+        body: projects.map((p) => ({
+            server_id: serverId,
+            canonical_root: p.root,
+            label: p.label,
+        })),
+        query: { on_conflict: "server_id,canonical_root" },
+        prefer: "resolution=merge-duplicates,return=minimal",
+    });
+}
 export async function persistPermissionRequest(input) {
     const rows = await rest("POST", "permission_requests", {
         body: {

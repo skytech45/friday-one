@@ -14,6 +14,13 @@ import { installCredential } from "./pairing.js";
 import { enroll } from "./enroll.js";
 import { decide } from "./policy.js";
 import { AcpAgent } from "./acp.js";
+import {
+  availableAgentSpecs,
+  probeVersion,
+  reportedAgents,
+  resolveAgent,
+  type AgentSpec,
+} from "./agents.js";
 import { GatewayConnection } from "./gateway.js";
 import { createHash, randomBytes } from "node:crypto";
 
@@ -22,10 +29,13 @@ const CONNECTOR_VERSION = "0.1.0";
 /** Identity holder: filled from the gateway's auth.resume.ok (mutable ref). */
 const ids = { serverId: "00000000-0000-0000-0000-000000000000", connectorId: "" };
 
-let agent: AcpAgent | null = null;
+/** One ACP child per selected adapter — never a single global agent. */
+const agents = new Map<string, AcpAgent>();
+/** Version strings learned at spawn time (reported to the app). */
+const agentVersions = new Map<string, string | null>();
 let conn: GatewayConnection | null = null;
-/** Live job → ACP session map so command.cancel can kill the right session. */
-const liveJobs = new Map<string, string>(); // jobId -> acp sessionId
+/** Live job → ACP session map so command.cancel can kill the right agent. */
+const liveJobs = new Map<string, { sessionId: string; adapter: string }>();
 
 /** SHA-256 hex of a string (for the rotation handshake). */
 function sha256hex(v: string): string {
@@ -70,36 +80,79 @@ async function maybeRotate(cfg: ReturnType<typeof loadConfig>): Promise<void> {
   }
 }
 
-/** Lazily start ONE ACP agent (hermes first — verified on this host). */
-async function getAgent(cfg: ReturnType<typeof loadConfig>): Promise<AcpAgent> {
-  if (agent && !agent.exited) return agent;
-  const cmd = process.env.FRIDAY_ACP_CMD ?? "/home/ubuntu/.local/bin/hermes-acp";
-  agent = AcpAgent.spawn(cmd, console.log);
-  const info = await agent.initialize();
-  console.log(`acp agent ready: ${info.name} ${info.version} (protocol ${info.protocolVersion})`);
-  return agent;
+/**
+ * Report what this host can run. Sent after every (re)connect and again when
+ * a version is learned at first spawn — the app's pickers are driven by this,
+ * never by a hardcoded list in the client.
+ */
+function reportCapabilities(cfg: ReturnType<typeof loadConfig>): void {
+  if (!conn) return;
+  const specs = availableAgentSpecs();
+  conn.emit("connector.hello", {
+    connector_version: CONNECTOR_VERSION,
+    agents: reportedAgents(specs, agentVersions),
+    // Roots are owner-configured (FRIDAY_ALLOWED_ROOTS) and already enforced
+    // locally; reporting them lets the app offer a project selector.
+    projects: cfg.allowedRoots.map((root) => ({
+      root,
+      label: root.split("/").filter(Boolean).pop() ?? root,
+    })),
+  });
+  console.log(
+    `capabilities: agents=[${specs.map((s) => s.adapter).join(", ")}] ` +
+      `projects=${cfg.allowedRoots.length}`,
+  );
+}
+
+/** Lazily start the ACP agent for a specific adapter. */
+async function getAgent(
+  cfg: ReturnType<typeof loadConfig>,
+  spec: AgentSpec,
+): Promise<AcpAgent> {
+  const existing = agents.get(spec.adapter);
+  if (existing && !existing.exited) return existing;
+  const a = AcpAgent.spawn(spec.cmd, console.log);
+  agents.set(spec.adapter, a);
+  const info = await a.initialize();
+  agentVersions.set(spec.adapter, info.version || null);
+  console.log(
+    `acp agent ready: ${spec.adapter} (${info.name} ${info.version}, protocol ${info.protocolVersion})`,
+  );
+  reportCapabilities(cfg); // version is now known
+  return a;
 }
 
 /** The Phase-5 command loop: dispatch → policy gate → adapter → acks. */
 async function handleDispatch(
   cfg: ReturnType<typeof loadConfig>,
-  env: { message_id: string; payload: unknown },
+  env: { message_id: string; agent_id?: string | null; payload: unknown },
 ): Promise<void> {
   const p = env.payload as {
     job_id?: string;
     operation?: string;
-    arguments?: { root?: string; prompt?: string };
+    arguments?: { root?: string; prompt?: string; agent?: string };
   };
   const jobId = typeof p.job_id === "string" ? p.job_id : "";
   const operation = typeof p.operation === "string" ? p.operation : "";
   const root = typeof p.arguments?.root === "string" ? p.arguments.root : "";
   const prompt = typeof p.arguments?.prompt === "string" ? p.arguments.prompt : "";
+  const requestedAgent = typeof p.arguments?.agent === "string" ? p.arguments.agent : null;
   const failJob = (reason: string): void => {
     conn!.emit("command.failed", { job_id: jobId, reason });
   };
 
   if (!jobId || operation !== "session.prompt" || !root || !prompt) {
     return failJob("unsupported_operation");
+  }
+
+  // Agent selection (§7/§9): the app picks an adapter it saw reported; the
+  // connector maps it to a LOCAL spec and refuses anything else. Unknown
+  // adapter = fail closed, never a silent fallback to a different agent.
+  const available = availableAgentSpecs();
+  const spec = resolveAgent(available, requestedAgent);
+  if (!spec) {
+    console.warn(`dispatch denied: agent ${requestedAgent} unavailable`);
+    return failJob("agent_unavailable");
   }
 
   // Project-root containment (F-17-style boundary): the connector only works
@@ -125,7 +178,7 @@ async function handleDispatch(
     return;
   }
   const decision = decide(policy, {
-    agentId: null,
+    agentId: env.agent_id ?? null,
     projectRoot: root,
     action: operation,
     executable: null,
@@ -135,29 +188,38 @@ async function handleDispatch(
     return failJob(`policy_${decision}`);
   }
 
-  conn!.emit("command.accepted", { job_id: jobId }, env.message_id);
-  conn!.emit("command.started", { job_id: jobId }, env.message_id);
+  conn!.emit("command.accepted", { job_id: jobId, agent: spec.adapter }, env.message_id);
+  conn!.emit("command.started", { job_id: jobId, agent: spec.adapter }, env.message_id);
 
   try {
-    const a = await getAgent(cfg);
+    const a = await getAgent(cfg, spec);
     const sessionId = await a.newSession(root);
-    liveJobs.set(jobId, sessionId);
+    liveJobs.set(jobId, { sessionId, adapter: spec.adapter });
     let deltaSeq = 0;
     try {
       const result = await a.prompt(sessionId, prompt, (delta) => {
         deltaSeq += 1;
         conn!.emit(
           "chat.delta",
-          { job_id: jobId, session_id: sessionId, delta, seq: deltaSeq },
+          { job_id: jobId, session_id: sessionId, agent: spec.adapter, delta, seq: deltaSeq },
           env.message_id,
         );
       });
       conn!.emit(
         "command.completed",
-        { job_id: jobId, result_summary: { stopReason: result.stopReason, session_id: sessionId } },
+        {
+          job_id: jobId,
+          result_summary: {
+            stopReason: result.stopReason,
+            session_id: sessionId,
+            agent: spec.adapter,
+          },
+        },
         env.message_id,
       );
-      console.log(`job ${jobId} completed (${deltaSeq} deltas, stop=${result.stopReason})`);
+      console.log(
+        `job ${jobId} completed on ${spec.adapter} (${deltaSeq} deltas, stop=${result.stopReason})`,
+      );
     } finally {
       liveJobs.delete(jobId);
     }
@@ -194,6 +256,17 @@ async function main(): Promise<void> {
             if (typeof p.server_id === "string") ids.serverId = p.server_id;
             if (typeof p.connector_id === "string") ids.connectorId = p.connector_id;
             console.log(`gateway accepted us: server=${ids.serverId} connector=${ids.connectorId}`);
+            // Probe versions off the auth path, then publish capabilities so
+            // the app can populate its agent/project pickers.
+            setTimeout(() => {
+              for (const s of availableAgentSpecs()) {
+                if (!agentVersions.has(s.adapter)) {
+                  const v = probeVersion(s.cmd);
+                  if (v) agentVersions.set(s.adapter, v);
+                }
+              }
+              reportCapabilities(cfg);
+            }, 0);
             return;
           }
           if (env.event_type === "command.dispatch") {
@@ -202,10 +275,13 @@ async function main(): Promise<void> {
           }
           if (env.event_type === "command.cancel") {
             const jobId = (env.payload as { job_id?: string }).job_id ?? "";
-            const sessionId = liveJobs.get(jobId);
-            if (agent && sessionId) {
-              agent.cancel(sessionId); // ACP session/cancel — prompt rejects, job exits
-              console.log(`cancel: job ${jobId.slice(0, 8)} session ${sessionId.slice(0, 10)}`);
+            const live = liveJobs.get(jobId);
+            const a = live ? agents.get(live.adapter) : undefined;
+            if (a && live) {
+              a.cancel(live.sessionId); // ACP session/cancel — prompt rejects, job exits
+              console.log(
+                `cancel: job ${jobId.slice(0, 8)} ${live.adapter} session ${live.sessionId.slice(0, 10)}`,
+              );
             } else {
               console.log(`cancel: job ${jobId.slice(0, 8)} not live (already finished)`);
             }
@@ -231,7 +307,7 @@ async function main(): Promise<void> {
 }
 
 process.on("SIGTERM", () => {
-  agent?.shutdown();
+  for (const a of agents.values()) a.shutdown();
   process.exit(0);
 });
 

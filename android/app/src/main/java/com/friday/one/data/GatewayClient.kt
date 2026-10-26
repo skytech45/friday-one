@@ -23,6 +23,7 @@ sealed interface GatewayEvent {
     data class Delta(val jobId: String, val text: String) : GatewayEvent
     data class Completed(val jobId: String, val stopReason: String) : GatewayEvent
     data class Failed(val jobId: String, val reason: String) : GatewayEvent
+    data class Rejected(val reason: String) : GatewayEvent
     data class PermissionRequested(val requestId: String, val operation: String) : GatewayEvent
     data object Disconnected : GatewayEvent
 }
@@ -66,6 +67,7 @@ class GatewayClient(
                     "chat.delta" -> GatewayEvent.Delta(corr ?: "", str("delta") ?: "")
                     "command.completed" -> GatewayEvent.Completed(corr ?: "", str("stopReason") ?: "")
                     "command.failed" -> GatewayEvent.Failed(corr ?: "", str("reason") ?: "")
+                    "command.rejected" -> GatewayEvent.Rejected(str("reason") ?: "rejected")
                     "permission.requested" -> GatewayEvent.PermissionRequested(
                         str("request_id") ?: "", str("operation") ?: "",
                     )
@@ -89,7 +91,13 @@ class GatewayClient(
         awaitClose { ws?.close(1000, "ui_closed") }
     }
 
-    fun submitPrompt(serverId: String, root: String, prompt: String, correlationId: String): Boolean {
+    fun submitPrompt(
+        serverId: String,
+        root: String,
+        prompt: String,
+        correlationId: String,
+        agent: String? = null,
+    ): Boolean {
         serverId.let { this.serverId = serverId }
         val env = buildJsonObject {
             put("protocol_version", 1)
@@ -110,6 +118,7 @@ class GatewayClient(
                 put("arguments", buildJsonObject {
                     put("root", root)
                     put("prompt", prompt)
+                    if (agent != null) put("agent", agent)
                 })
             })
         }

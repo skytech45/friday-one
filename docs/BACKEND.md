@@ -1,18 +1,18 @@
 # FRIDAY One — Backend Work Completed (v2.0 plan)
 
-**Last updated:** 2026-10-25 · **HEAD:** `5fee8c3` · **Live stack:** Vercel control plane + Supabase + gateway (systemd) + connector (paired) + Android v0.6.0
+**Last updated:** 2026-10-26 · **Live stack:** Vercel control plane + Supabase + gateway (systemd); Android v0.9.0 artifact built, connector not currently installed on this host
 
 ## Live deployment (all verified by execution)
 
 | Component | Where | Status |
 |---|---|---|
 | Control plane (11 API routes) | `https://friday-one-control-plane-cotts1-2550.vercel.app` | live, P0-hardened |
-| Database | Supabase project `tbysxnyuipjwutqxtxvy` (pooler: aws-0-ap-northeast-1), migrations 0001–0004 applied, all 12 tables RLS-on | live |
+| Database | Supabase project `tbysxnyuipjwutqxtxvy` (pooler: aws-0-ap-northeast-1), migrations 0001–0005 applied, all tables RLS-on | live |
 | Realtime gateway | systemd `friday-gateway` on the host, `127.0.0.1:8790`, exposed via quick tunnel | live, replay-guarded |
 | Gateway tunnel | systemd `friday-gw-tunnel` (URL churns on restart until F-22/DNS) | live |
-| Connector | running paired on the host (OpenCode agent; Hermes blocked on provider quota) | live |
+| Connector | no `friday-connector.service` on this host as of 2026-10-26 (credential file absent); re-pair before an E2E run | **not running** |
 | GitHub releases | `skytech45/friday-one` — v0.3.0/v0.4.0-app/v0.5.0/v0.6.0 (connector bundles + sha256 + install.sh + APKs) | public |
-| CI | typecheck matrix (gateway/connector/control-plane) + connector bundle build + Android assembleRelease + gitleaks | green |
+| CI | typecheck matrix + connector/gateway unit + integration tests + Android unit tests + assembleRelease + gitleaks | updated 2026-10-26, unverified on Actions |
 
 ## What was built (chronological, all E2E-verified live)
 
@@ -30,6 +30,16 @@
    - **ACP output budget** (P2): per-prompt byte cap (default 1 MiB, `ACP_MAX_STREAM_BYTES`); past the cap the session is cancelled and the job fails bounded.
    - **Gateway hardening** (P2): fail-fast env validation at boot; idle-connector sweep (90 s silent → terminate, `CONNECTOR_IDLE_MS`).
    - **Route consolidation** for the Vercel Hobby 12-function cap: `servers/[id]/[action]` (revoke|rotate), `connector/[action]` (rotate-credential).
+
+9. **Capability discovery — agent & project selection (2026-10-26, code + tests; deploy pending):**
+   - Connector probes configured ACP commands (`FRIDAY_ACP_HERMES_CMD`, `FRIDAY_ACP_OPENCODE_CMD`, legacy `FRIDAY_ACP_CMD`) and emits `connector.hello` after authentication with `agents[]` (adapter, version, health) and `projects[]` (its `FRIDAY_ALLOWED_ROOTS`). It spawns a separate ACP child per adapter, on demand.
+   - Gateway upserts `agents` + `projects` scoped to the **credential's** server id (never payload-supplied), sanitises ids/roots, and resolves `arguments.agent` to a durable `agent_id` before queueing a job. Unknown adapters are rejected with `command.rejected{agent_not_available}`.
+   - Connector re-validates the adapter against its local registry, fails closed (`agent_unavailable`), and passes the resolved `agent_id` into the policy gate — so per-agent policy scopes now apply.
+   - `GET /api/v1/servers` returns `agents[]` + `projects[]` per server (no new Vercel function).
+   - Android v0.9.0 (versionCode 10, signed): agent and project chips in chat, dashboard shows discovered `adapter · N root(s)`, `command.rejected` surfaced. Falls back to the previous single-agent/default-root behaviour when the backend has not reported capabilities yet.
+   - Tests: `connector npm test` (8 checks, agent registry/selection/PATH resolution); `gateway npm test` (7 sanitisation checks + an integration test that boots the gateway against a fake PostgREST and asserts scoped, sanitised upserts); `android :app:testDebugUnitTest` (3 parsing checks). All typechecks and the release build pass.
+
+   **Not yet verified end-to-end:** the gateway and control plane changes are not deployed, and no `friday-connector.service` exists on this host at 2026-10-26 01:30 (no credential file), so no live pairing/chat run was possible. Deploy gateway + control plane and re-pair a connector before calling this live.
 
 
 ## Key live-test evidence (commands in git history / audit doc)

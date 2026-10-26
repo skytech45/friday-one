@@ -23,10 +23,14 @@ import {
   upsertQueuedJob,
   setJobState,
   findQueuedJob,
+  findAgent,
+  upsertAgents,
+  upsertProjects,
   persistPermissionRequest,
   decidePermissionRequest,
   type ServerRow,
 } from "./supabase.js";
+import { sanitizeAgents, sanitizeProjects } from "./agents.js";
 
 const PORT = Number(process.env.PORT ?? 8790);
 const HOST = process.env.HOST ?? "127.0.0.1"; // loopback; TLS via tunnel/reverse proxy
@@ -109,6 +113,7 @@ function gatewayEnvelope(fields: {
   connectorId: string | null;
   eventType: string;
   payload: unknown;
+  agentId?: string | null;
 }): Envelope {
   return {
     protocol_version: 1,
@@ -116,7 +121,7 @@ function gatewayEnvelope(fields: {
     correlation_id: fields.correlationId,
     server_id: fields.serverId,
     connector_id: fields.connectorId,
-    agent_id: null,
+    agent_id: fields.agentId ?? null,
     session_id: null,
     event_type: fields.eventType,
     issued_at: new Date().toISOString(),
@@ -133,6 +138,24 @@ async function handleConnectorMessage(conn: ConnectorConn, env: Envelope): Promi
     case "connector.heartbeat": {
       conn.lastSeenMs = Date.now();
       await touchLastSeen(conn.serverId);
+      return;
+    }
+    case "connector.hello": {
+      // Discovery report from the authenticated connector. The server id is
+      // taken from the credential-bound socket, never from the payload.
+      const payload = (env.payload ?? {}) as { agents?: unknown; projects?: unknown };
+      const agents = sanitizeAgents(payload.agents);
+      const projects = sanitizeProjects(payload.projects);
+      try {
+        await upsertAgents(conn.serverId, agents);
+        await upsertProjects(conn.serverId, projects);
+        log(
+          `connector ${conn.serverId.slice(0, 8)}: ${agents.length} agent(s), ${projects.length} project(s)`,
+        );
+      } catch (e) {
+        // Discovery is additive: a failed upsert must not drop the socket.
+        log(`capabilities store failed: ${(e as Error).message}`);
+      }
       return;
     }
     case "command.accepted":
@@ -235,12 +258,38 @@ async function handleAppMessage(conn: AppConn, env: Envelope): Promise<void> {
       const idem = typeof p.idempotency_key === "string" && p.idempotency_key
         ? p.idempotency_key
         : crypto.randomUUID();
+
+      // Agent selection (plan §7/§9): resolve the requested adapter to a row
+      // this server actually reported. An unavailable adapter is rejected
+      // BEFORE a job is queued; the connector re-checks locally as well.
+      const requestedAgent = (p.arguments as { agent?: unknown } | null)?.agent;
+      let agentId: string | null = null;
+      if (requestedAgent !== undefined && requestedAgent !== null) {
+        if (typeof requestedAgent !== "string" || !/^[a-z][a-z0-9_-]{0,39}$/.test(requestedAgent)) {
+          sendTo(conn, gatewayEnvelope({
+            correlationId: env.message_id, serverId, connectorId: null,
+            eventType: "command.rejected", payload: { reason: "invalid_agent" },
+          }));
+          return;
+        }
+        const agent = await findAgent(serverId, requestedAgent);
+        if (!agent) {
+          sendTo(conn, gatewayEnvelope({
+            correlationId: env.message_id, serverId, connectorId: null,
+            eventType: "command.rejected", payload: { reason: "agent_not_available" },
+          }));
+          return;
+        }
+        agentId = agent.id;
+      }
+
       const job = await upsertQueuedJob(serverId, idem, p.operation);
       const dispatch = gatewayEnvelope({
         correlationId: env.message_id,
         serverId,
         connectorId: connector.connectorId,
         eventType: "command.dispatch",
+        agentId,
         payload: { job_id: job.id, operation: p.operation, arguments: p.arguments ?? null },
         // idempotency flows through so replays cannot double-execute
       });

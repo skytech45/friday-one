@@ -25,8 +25,8 @@ android {
         applicationId = "com.friday.one"
         minSdk = 26
         targetSdk = 34
-        versionCode = 9
-        versionName = "0.8.1"
+        versionCode = 10
+        versionName = "0.9.0"
         // v2 cloud stack. Publishable key is public by design; authorization
         // is server-side (RLS + control-plane verification).
         val supabaseUrl = (project.findProperty("SUPABASE_URL") as String?)
@@ -107,6 +107,8 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    testImplementation("junit:junit:4.13.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
