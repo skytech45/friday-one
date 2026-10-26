@@ -69,21 +69,52 @@ MemoryMax=512M
 [Install]
 WantedBy=multi-user.target
 EOF
+  cat > /usr/local/bin/fridayone <<'EOF'
+#!/usr/bin/env bash
+# FRIDAY One server terminal pairing & management tool
+set -euo pipefail
+if [ -f /etc/friday-connector/credential ] && [ "${1:-}" != "enroll" ] && [ "${1:-}" != "pair" ]; then
+  systemctl status friday-connector --no-pager
+  echo ""
+  echo "FRIDAY Connector is installed and active."
+  echo "To re-pair with a new enrollment token, run: fridayone pair"
+  exit 0
+fi
+
+sudo /opt/friday-connector/install.sh enroll "${1:-}"
+EOF
+  chmod 0755 /usr/local/bin/fridayone
   systemctl daemon-reload
 }
 
-case "${1:-help}" in
-  enroll)
+case "${1:-install}" in
+  install)
     need_root
     if [ ! -f "$BIN" ]; then download_and_verify; create_service; fi
-    echo "Enter the one-time enrollment token from the app:"
-    read -r TOKEN
+    echo "=========================================================="
+    echo "  FRIDAY Connector framework installed successfully."
+    echo "  Type 'fridayone' on this terminal to start pairing!"
+    echo "=========================================================="
+    ;;
+  pair|enroll)
+    need_root
+    if [ ! -f "$BIN" ]; then download_and_verify; create_service; fi
+    TOKEN="${2:-}"
+    if [ -z "$TOKEN" ]; then
+      echo "=========================================================="
+      echo "  FRIDAY One Server Pairing"
+      echo "=========================================================="
+      echo "Enter the one-time enrollment token from your FRIDAY One app:"
+      read -r TOKEN
+    fi
     # Enrollment runs as the service user; the credential lands 0600.
     sudo -u "$SERVICE_USER" env FRIDAY_CONTROL_PLANE_URL="$(grep FRIDAY_CONTROL_PLANE_URL "$ENVF" | cut -d= -f2)" \
       FRIDAY_CREDENTIAL_FILE=/etc/friday-connector/credential \
       node "$BIN" enroll "$TOKEN"
     systemctl enable --now friday-connector
-    echo "connector installed and started."
+    echo "=========================================================="
+    echo "  Connector paired & service running in background ✓"
+    echo "=========================================================="
     ;;
   status)    systemctl status friday-connector --no-pager ;;
   upgrade)   need_root; download_and_verify; systemctl restart friday-connector; echo "upgraded to $VERSION" ;;
@@ -97,10 +128,10 @@ case "${1:-help}" in
   uninstall)
     need_root
     systemctl disable --now friday-connector || true
-    rm -f /etc/systemd/system/friday-connector.service "$BIN" "$ENVF"
+    rm -f /etc/systemd/system/friday-connector.service "$BIN" "$ENVF" /usr/local/bin/fridayone
     rm -rf /etc/friday-connector
     systemctl daemon-reload
     echo "connector removed (service user kept; delete with: userdel -r $SERVICE_USER)"
     ;;
-  *) echo "usage: install.sh enroll|status|upgrade|rollback <ver>|revoke|uninstall" ;;
+  *) echo "usage: install.sh [install|pair|status|upgrade|rollback <ver>|revoke|uninstall]" ;;
 esac

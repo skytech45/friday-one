@@ -164,6 +164,27 @@ class GatewayClient(
         ws?.send(env.toString())
     }
 
+    fun cancel(jobId: String): Boolean {
+        val env = buildJsonObject {
+            put("protocol_version", 1)
+            put("message_id", UUID.randomUUID().toString())
+            put("correlation_id", jobId)
+            put("server_id", serverId)
+            put("connector_id", null as String?)
+            put("agent_id", null as String?)
+            put("session_id", null as String?)
+            put("event_type", "command.cancel")
+            put("issued_at", java.time.Instant.now().toString())
+            put("expires_at", null as String?)
+            put("sequence", ++seq)
+            put("idempotency_key", UUID.randomUUID().toString())
+            put("payload", buildJsonObject {
+                put("job_id", jobId)
+            })
+        }
+        return ws?.send(env.toString()) ?: false
+    }
+
     fun close() {
         ws?.close(1000, "bye")
         ws = null

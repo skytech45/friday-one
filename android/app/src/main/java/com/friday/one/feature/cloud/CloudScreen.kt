@@ -1,54 +1,76 @@
 package com.friday.one.feature.cloud
 
-import androidx.compose.foundation.background
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.friday.one.data.CloudServer
-import com.friday.one.data.ControlPlaneClient
-import com.friday.one.data.GatewayClient
-import com.friday.one.data.GatewayEvent
-import com.friday.one.data.SupabaseAuth
+import com.friday.one.data.*
 import com.friday.one.ui.components.Dash
+import com.friday.one.ui.theme.*
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 /**
- * The cloud stack UI (Phase 7): Supabase sign-in → server dashboard with
- * pairing → live agent chat over the gateway. Typed states, explicit
- * loading/error surfaces, single screen per the app's existing style.
+ * FRIDAY One — Cloud UI Suite (v2.0 / PRD §6 / UI_UX_GUIDE §7-§9)
+ *
+ * Flow:
+ * 1. Authentication (Login / Register with Google OAuth PKCE and email/password).
+ * 2. Dedicated Server Pairing Screen (prominently surfaced after registration or via "Add Server")
+ *    - Step 1: Install connector on cloud server.
+ *    - Step 2: Run `fridayone` on terminal with one-time enrollment token.
+ *    - Step 3: Choose "Scan Terminal QR Code" or "Pair with Key" (16-20 digit code).
+ * 3. Server Management Dashboard (live health, metrics, agent launcher, policy editor).
+ * 4. AI Agent Chat (live streaming deltas, cancellation, inline permission approvals).
  */
 @Composable
 fun CloudScreen(auth: SupabaseAuth) {
     val scope = rememberCoroutineScope()
-    var session by remember { mutableStateOf<com.friday.one.data.CloudSession?>(null) }
+    var session by remember { mutableStateOf<CloudSession?>(null) }
     var checking by remember { mutableStateOf(true) }
-    var showRegister by remember { mutableStateOf(false) }
     var googleError by remember { mutableStateOf<String?>(null) }
 
-    // Google OAuth deep link: fridayone://auth-callback?code=...
+    // Google OAuth PKCE deep link: fridayone://auth-callback?code=...
     LaunchedEffect(Unit) {
         auth.current()?.let { session = it }
         checking = false
-        com.friday.one.data.AuthCallbacks.googleRedirect.collect { uri ->
+        AuthCallbacks.googleRedirect.collect { uri ->
             if (uri != null) {
-                com.friday.one.data.AuthCallbacks.googleRedirect.value = null
+                AuthCallbacks.googleRedirect.value = null
                 val code = uri.getQueryParameter("code")
                 val err = uri.getQueryParameter("error_description") ?: uri.getQueryParameter("error")
                 when {
@@ -64,287 +86,618 @@ fun CloudScreen(auth: SupabaseAuth) {
     }
 
     when {
-        checking -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = Dash.Accent)
+        checking -> Box(Modifier.fillMaxSize().background(Dash.Bg), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = FridayBrandBlue)
         }
-        session == null && showRegister -> RegisterView(
-            auth,
-            onRegistered = { s -> session = s },
-            onBack = { showRegister = false },
-        )
-        session == null -> LoginView(
-            auth,
+        session == null -> AuthScreen(
+            auth = auth,
             onSignedIn = { s -> session = s },
-            onRegister = { showRegister = true },
             googleError = googleError,
         )
-        else -> DashboardView(auth, session!!, onSignedOut = {
-            scope.launch { auth.clear() }
-            session = null
-        })
+        else -> AppDashboardShell(
+            auth = auth,
+            session = session!!,
+            onSignedOut = {
+                scope.launch { auth.clear() }
+                session = null
+            },
+        )
     }
 }
 
+// ============================================================================
+// 1. AUTHENTICATION SCREEN (Sign In & Register Tabs)
+// ============================================================================
 @Composable
-private fun LoginView(
+private fun AuthScreen(
     auth: SupabaseAuth,
-    onSignedIn: (com.friday.one.data.CloudSession) -> Unit,
-    onRegister: () -> Unit,
+    onSignedIn: (CloudSession) -> Unit,
     googleError: String?,
 ) {
+    var selectedTab by remember { mutableIntStateOf(0) } // 0 = Sign In, 1 = Create Account
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    val context = androidx.compose.ui.platform.LocalContext.current
-
-    Column(
-        Modifier.fillMaxSize().background(Dash.Bg).verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text("FRIDAY One", color = Dash.Text, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Text("Your servers, from anywhere", color = Dash.Dim, fontSize = 12.sp)
-        Spacer(Modifier.height(24.dp))
-
-        Button(
-            onClick = {
-                // Custom Tab -> Supabase authorize -> fridayone://auth-callback.
-                // If Google isn't enabled yet, Supabase shows a setup error page.
-                val intent = android.content.Intent(
-                    android.content.Intent.ACTION_VIEW,
-                    android.net.Uri.parse(auth.googleAuthorizeUrl()),
-                )
-                runCatching { context.startActivity(intent) }
-                    .onFailure { error = "no browser available" }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Continue with Google") }
-        Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f).height(1.dp).background(Dash.Card))
-            Text("  or  ", color = Dash.Dim, fontSize = 11.sp)
-            Box(Modifier.weight(1f).height(1.dp).background(Dash.Card))
-        }
-        Spacer(Modifier.height(12.dp))
-
-        OutlinedTextField(
-            value = email, onValueChange = { email = it }, label = { Text("Email") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-            colors = cloudFieldColors(),
-        )
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = password, onValueChange = { password = it }, label = { Text("Password") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(),
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            colors = cloudFieldColors(),
-        )
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = {
-                busy = true; error = null
-                scope.launch {
-                    runCatching { auth.login(email.trim(), password) }
-                        .onSuccess(onSignedIn)
-                        .onFailure { error = it.javaClass.simpleName + ": " + (it.message ?: "unknown"); android.util.Log.e("FRIDAY-AUTH", "login failed", it) }
-                    busy = false
-                }
-            },
-            enabled = !busy && email.isNotBlank() && password.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "…" else "Sign in") }
-        TextButton(onClick = onRegister) {
-            Text("New here? Create an account", color = Dash.Accent, fontSize = 12.sp)
-        }
-        (error ?: googleError)?.let { Text(it, color = Dash.Bad, fontSize = 12.sp) }
-    }
-}
-
-/** Plan v2 §10: dedicated register-new-user page. */
-@Composable
-private fun RegisterView(
-    auth: SupabaseAuth,
-    onRegistered: (com.friday.one.data.CloudSession) -> Unit,
-    onBack: () -> Unit,
-) {
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var confirm by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
-    val pwOk = password.length >= 8
-    val match = password.isNotEmpty() && password == confirm
     val emailOk = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+    val pwOk = password.length >= 8
+    val matchOk = selectedTab == 0 || (password.isNotEmpty() && password == confirmPassword)
 
     Column(
-        Modifier.fillMaxSize().background(Dash.Bg).verticalScroll(rememberScrollState()).padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Dash.Bg)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, null, tint = Dash.Text)
-            }
-            Text("Create account", color = Dash.Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        // App Brand Header
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(FridayBrandBlue.copy(alpha = 0.15f))
+                .border(1.dp, FridayBrandBlue.copy(alpha = 0.4f), RoundedCornerShape(18.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Outlined.Dns, "Brand Logo", tint = FridayBrandBlue, modifier = Modifier.size(34.dp))
         }
-        Text("Email + password. You can also use Google later.", color = Dash.Dim, fontSize = 11.sp)
-        Spacer(Modifier.height(20.dp))
-        OutlinedTextField(
-            value = email, onValueChange = { email = it }, label = { Text("Email") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-            isError = email.isNotBlank() && !emailOk,
-            supportingText = {
-                if (email.isNotBlank() && !emailOk) Text("enter a valid email", color = Dash.Bad, fontSize = 11.sp)
-            },
-            colors = cloudFieldColors(),
-        )
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = password, onValueChange = { password = it }, label = { Text("Password (min 8)") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(),
-            visualTransformation = PasswordVisualTransformation(),
-            isError = password.isNotEmpty() && !pwOk,
-            colors = cloudFieldColors(),
-        )
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = confirm, onValueChange = { confirm = it }, label = { Text("Confirm password") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(),
-            visualTransformation = PasswordVisualTransformation(),
-            isError = confirm.isNotEmpty() && !match,
-            supportingText = {
-                if (confirm.isNotEmpty() && !match) Text("passwords don't match", color = Dash.Bad, fontSize = 11.sp)
-            },
-            colors = cloudFieldColors(),
-        )
         Spacer(Modifier.height(16.dp))
+        Text("FRIDAY One", color = Dash.Text, fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+        Text("Secure Mobile Control Center for Server AI Agents", color = Dash.Dim, fontSize = 13.sp, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(28.dp))
+
+        // Google OAuth Primary Action
         Button(
             onClick = {
-                busy = true; error = null; notice = null
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(auth.googleAuthorizeUrl()))
+                runCatching { context.startActivity(intent) }
+                    .onFailure { error = "No browser available for Google sign-in" }
+            },
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Dash.CardEdge),
+            shape = RoundedCornerShape(14.dp),
+        ) {
+            Icon(Icons.Outlined.Cloud, null, tint = FridayBrandBlue, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("Continue with Google", color = Dash.Text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            HorizontalDivider(Modifier.weight(1f), color = Dash.CardEdge)
+            Text("  or email  ", color = Dash.Dim, fontSize = 12.sp)
+            HorizontalDivider(Modifier.weight(1f), color = Dash.CardEdge)
+        }
+        Spacer(Modifier.height(18.dp))
+
+        // Segmented Tab Selector (Sign In vs Create Account)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Dash.Card)
+                .padding(4.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (selectedTab == 0) FridayBrandBlue.copy(alpha = 0.2f) else Color.Transparent)
+                    .clickable { selectedTab = 0; error = null }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "Sign In",
+                    color = if (selectedTab == 0) FridayBrandBlue else Dash.Dim,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (selectedTab == 1) FridayBrandBlue.copy(alpha = 0.2f) else Color.Transparent)
+                    .clickable { selectedTab = 1; error = null }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "Create Account",
+                    color = if (selectedTab == 1) FridayBrandBlue else Dash.Dim,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // Form Inputs
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            label = { Text("Email address") },
+            leadingIcon = { Icon(Icons.Outlined.AccountCircle, null, tint = Dash.Dim) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            colors = cloudFieldColors(),
+            shape = RoundedCornerShape(14.dp),
+        )
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text(if (selectedTab == 1) "Password (min 8 characters)" else "Password") },
+            leadingIcon = { Icon(Icons.Outlined.Key, null, tint = Dash.Dim) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            colors = cloudFieldColors(),
+            shape = RoundedCornerShape(14.dp),
+        )
+
+        if (selectedTab == 1) {
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = confirmPassword,
+                onValueChange = { confirmPassword = it },
+                label = { Text("Confirm password") },
+                leadingIcon = { Icon(Icons.Outlined.Key, null, tint = Dash.Dim) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                isError = confirmPassword.isNotEmpty() && !matchOk,
+                supportingText = {
+                    if (confirmPassword.isNotEmpty() && !matchOk) {
+                        Text("Passwords do not match", color = FridayStatusCrit, fontSize = 11.sp)
+                    }
+                },
+                colors = cloudFieldColors(),
+                shape = RoundedCornerShape(14.dp),
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // Primary Form Submit
+        Button(
+            onClick = {
+                busy = true
+                error = null
+                notice = null
                 scope.launch {
-                    when (val r = runCatching { auth.register(email.trim(), password) }.getOrElse { e ->
-                        error = e.message; null
-                    }) {
-                        is com.friday.one.data.SignupOutcome.SignedIn -> onRegistered(r.session)
-                        com.friday.one.data.SignupOutcome.NeedsEmailConfirmation -> {
-                            notice = "Account created — check your email and confirm, then sign in."
+                    if (selectedTab == 0) {
+                        runCatching { auth.login(email.trim(), password) }
+                            .onSuccess(onSignedIn)
+                            .onFailure { error = it.message ?: "Sign in failed" }
+                    } else {
+                        when (val r = runCatching { auth.register(email.trim(), password) }.getOrElse { e ->
+                            error = e.message
+                            null
+                        }) {
+                            is SignupOutcome.SignedIn -> onSignedIn(r.session)
+                            SignupOutcome.NeedsEmailConfirmation -> {
+                                notice = "Account created! Check your email to confirm, then sign in."
+                            }
+                            null -> Unit
                         }
-                        null -> Unit
                     }
                     busy = false
                 }
             },
-            enabled = !busy && emailOk && pwOk && match,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "…" else "Create account") }
-        notice?.let { Text(it, color = Dash.Accent, fontSize = 12.sp) }
-        error?.let { Text(it, color = Dash.Bad, fontSize = 12.sp) }
+            enabled = !busy && emailOk && pwOk && matchOk,
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = FridayBrandBlue),
+            shape = RoundedCornerShape(14.dp),
+        ) {
+            if (busy) {
+                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                Text(
+                    if (selectedTab == 0) "Sign In" else "Create Account",
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                )
+            }
+        }
+
+        notice?.let {
+            Spacer(Modifier.height(14.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = FridayStatusOk.copy(alpha = 0.15f)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.CheckCircle, null, tint = FridayStatusOk)
+                    Spacer(Modifier.width(8.dp))
+                    Text(it, color = FridayStatusOk, fontSize = 12.sp)
+                }
+            }
+        }
+
+        (error ?: googleError)?.let {
+            Spacer(Modifier.height(14.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = FridayStatusCrit.copy(alpha = 0.15f)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Error, null, tint = FridayStatusCrit)
+                    Spacer(Modifier.width(8.dp))
+                    Text(it, color = FridayStatusCrit, fontSize = 12.sp)
+                }
+            }
+        }
     }
 }
 
+// ============================================================================
+// 2. MAIN APPLICATION SHELL & DASHBOARD
+// ============================================================================
 @Composable
-private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.CloudSession, onSignedOut: () -> Unit) {
+private fun AppDashboardShell(
+    auth: SupabaseAuth,
+    session: CloudSession,
+    onSignedOut: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
     var servers by remember { mutableStateOf<List<CloudServer>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var enrollment by remember { mutableStateOf<com.friday.one.data.EnrollmentInfo?>(null) }
-    var chatServer by remember { mutableStateOf<CloudServer?>(null) }
+    var activeChatServer by remember { mutableStateOf<CloudServer?>(null) }
     var securityOpen by remember { mutableStateOf(false) }
+    var pairingOpen by remember { mutableStateOf(false) }
+    var gatewayUrl by remember { mutableStateOf<String?>(com.friday.one.BuildConfig.GATEWAY_URL) }
     val client = remember { ControlPlaneClient() }
 
-    suspend fun reload() {
-        try { servers = client.listServers(session.accessToken); loadError = null }
-        catch (e: Exception) {
-            // A 401 here after SupabaseAuth's auto-refresh means the session
-            // is truly dead — surface login instead of an error loop.
+    suspend fun reloadServers() {
+        try {
+            servers = client.listServers(session.accessToken)
+            loadError = null
+            // If user has 0 servers after load, automatically guide them to the pairing flow
+            if (servers != null && servers!!.isEmpty()) {
+                pairingOpen = true
+            }
+        } catch (e: Exception) {
             if (e.message?.contains("401") == true) onSignedOut()
             else loadError = e.message
         }
     }
-    var gatewayUrl by remember { mutableStateOf<String?>(com.friday.one.BuildConfig.GATEWAY_URL) }
 
     LaunchedEffect(session.accessToken) {
-        reload()
-        // Runtime gateway discovery: prefer the URL the control plane knows
-        // (fresh after tunnel churn) over the build-time default.
+        reloadServers()
         client.gatewayUrl(session.accessToken)?.let { gatewayUrl = it }
     }
 
-    chatServer?.let { srv ->
-        gatewayUrl?.let { gw ->
-            ChatView(
-                session = session,
-                server = srv,
-                gatewayUrl = gw,
-                onBack = { chatServer = null; scope.launch { reload() } },
+    when {
+        // Active Chat View
+        activeChatServer != null -> {
+            gatewayUrl?.let { gw ->
+                ChatView(
+                    session = session,
+                    server = activeChatServer!!,
+                    gatewayUrl = gw,
+                    onBack = {
+                        activeChatServer = null
+                        scope.launch { reloadServers() }
+                    },
+                )
+            }
+        }
+        // Security & Audit View
+        securityOpen -> {
+            SecurityView(
+                accessToken = session.accessToken,
+                servers = servers ?: emptyList(),
+                onBack = {
+                    securityOpen = false
+                    scope.launch { reloadServers() }
+                },
             )
         }
-        return
+        // Dedicated Pairing Screen
+        pairingOpen -> {
+            ServerPairingScreen(
+                accessToken = session.accessToken,
+                existingCount = servers?.size ?: 0,
+                onPairingComplete = {
+                    pairingOpen = false
+                    scope.launch { reloadServers() }
+                },
+                onCancel = {
+                    pairingOpen = false
+                    scope.launch { reloadServers() }
+                },
+            )
+        }
+        // Home Servers Dashboard
+        else -> {
+            DashboardView(
+                session = session,
+                servers = servers,
+                loadError = loadError,
+                onAddServer = { pairingOpen = true },
+                onOpenChat = { srv -> activeChatServer = srv },
+                onOpenSecurity = { securityOpen = true },
+                onReload = { scope.launch { reloadServers() } },
+                onSignedOut = onSignedOut,
+            )
+        }
+    }
+}
+
+// ============================================================================
+// 3. DEDICATED SERVER PAIRING SCREEN (QR Scanner + Key Option)
+// ============================================================================
+@Composable
+private fun ServerPairingScreen(
+    accessToken: String,
+    existingCount: Int,
+    onPairingComplete: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    var serverName by remember { mutableStateOf("vps-${existingCount + 1}") }
+    var enrollment by remember { mutableStateOf<EnrollmentInfo?>(null) }
+    var codeInput by remember { mutableStateOf("") }
+    var claiming by remember { mutableStateOf(false) }
+    var generating by remember { mutableStateOf(false) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var pairingModeTab by remember { mutableIntStateOf(0) } // 0 = Scan QR, 1 = Pair with Key
+    var copiedNotice by remember { mutableStateOf(false) }
+
+    val client = remember { ControlPlaneClient() }
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+
+    // ZXing QR Code Scanner Launcher
+    val qrLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val contents = result.contents ?: return@rememberLauncherForActivityResult
+        val uri = runCatching { Uri.parse(contents) }.getOrNull()
+        if (uri?.scheme == "fridayone" && uri.host == "pair") {
+            val scannedCode = uri.getQueryParameter("c") ?: ""
+            val scannedEnrollment = uri.getQueryParameter("e") ?: enrollment?.enrollmentId ?: ""
+            if (scannedCode.length in 16..20 && scannedEnrollment.isNotEmpty()) {
+                claiming = true
+                statusMessage = "Claiming enrollment and verifying connector..."
+                scope.launch {
+                    runCatching {
+                        client.claimEnrollment(accessToken, scannedEnrollment, scannedCode)
+                    }.onSuccess {
+                        statusMessage = "Server paired and verified online! ✓"
+                        delay(1200)
+                        onPairingComplete()
+                    }.onFailure {
+                        errorMessage = "Pairing failed: ${it.message}"
+                        claiming = false
+                    }
+                }
+            } else {
+                errorMessage = "QR code did not contain a valid pairing payload"
+            }
+        } else if (contents.length in 16..20 && contents.all(Char::isDigit)) {
+            codeInput = contents
+            pairingModeTab = 1
+        }
     }
 
-    if (securityOpen) {
-        SecurityView(
-            accessToken = session.accessToken,
-            servers = servers ?: emptyList(),
-            onBack = { securityOpen = false; scope.launch { reload() } },
-        )
-        return
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            qrLauncher.launch(
+                ScanOptions().apply {
+                    setPrompt("Point camera at the server terminal QR code")
+                    setBeepEnabled(false)
+                    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                },
+            )
+        } else {
+            errorMessage = "Camera permission is required to scan the terminal QR code"
+        }
     }
 
-    Column(Modifier.fillMaxSize().background(Dash.Bg).padding(16.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Dash.Bg)
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+    ) {
+        // Top Bar
         Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onCancel) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = Dash.Text)
+            }
+            Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
-                Text("Servers", color = Dash.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text(session.email, color = Dash.Dim, fontSize = 11.sp)
-            }
-            TextButton(onClick = onSignedOut) {
-                Text("Sign out", color = Dash.Bad, fontSize = 12.sp)
-            }
-            IconButton(onClick = { securityOpen = true }) {
-                Icon(Icons.Outlined.Security, "security", tint = Dash.Accent)
+                Text("Pair Cloud Server", color = Dash.Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("Connect Linux VPS via the outbound connector", color = Dash.Dim, fontSize = 12.sp)
             }
         }
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = {
-            scope.launch {
-                runCatching { client.createEnrollment(session.accessToken, "server-${(servers?.size ?: 0) + 1}") }
-                    .onSuccess { enrollment = it }
-                    .onFailure { loadError = it.message }
-            }
-        }) {
-            Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(6.dp)); Text("Add server")
-        }
-        Spacer(Modifier.height(12.dp))
-        loadError?.let { Text(it, color = Dash.Bad, fontSize = 12.sp) }
-        when {
-            servers == null -> CircularProgressIndicator(color = Dash.Accent)
-            servers!!.isEmpty() -> Text(
-                "No servers yet — add one, then run the connector's `pair` command with the code.",
-                color = Dash.Dim, fontSize = 13.sp)
-            else -> LazyColumn {
-                items(servers!!) { s ->
-                    Card(
+
+        Spacer(Modifier.height(18.dp))
+
+        // Step 0: Name & Token Generation (if not generated yet)
+        if (enrollment == null) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Dash.Card),
+                shape = RoundedCornerShape(18.dp),
+                border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Dash.CardEdge)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("1. Name Your Server", color = Dash.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Choose a friendly name for this server instance", color = Dash.Dim, fontSize = 12.sp)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = serverName,
+                        onValueChange = { serverName = it },
+                        label = { Text("Server Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = cloudFieldColors(),
+                        shape = RoundedCornerShape(12.dp),
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Button(
                         onClick = {
-                            if (s.enrollmentState == "active") chatServer = s
-                            else loadError = "Server not active yet — complete pairing first"
+                            generating = true
+                            errorMessage = null
+                            scope.launch {
+                                runCatching { client.createEnrollment(accessToken, serverName.trim()) }
+                                    .onSuccess {
+                                        enrollment = it
+                                        generating = false
+                                    }
+                                    .onFailure {
+                                        errorMessage = it.message ?: "Failed to create enrollment"
+                                        generating = false
+                                    }
+                            }
                         },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        colors = CardDefaults.cardColors(containerColor = Dash.Card),
+                        enabled = !generating && serverName.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = FridayBrandBlue),
+                        shape = RoundedCornerShape(12.dp),
                     ) {
-                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            LiveDot(s.online)
-                            Spacer(Modifier.width(10.dp))
-                            Column {
-                                Text(s.name, color = Dash.Text, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    if (s.online) "online" else s.enrollmentState,
-                                    color = if (s.online) Dash.Accent else Dash.Dim, fontSize = 11.sp,
+                        if (generating) {
+                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text("Generate Pairing Session", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        } else {
+            val info = enrollment!!
+
+            // STEP 1 & 2: VPS Terminal Instructions
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Dash.Card),
+                shape = RoundedCornerShape(18.dp),
+                border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Dash.CardEdge)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(FridayBrandBlue),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("1", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text("Install Connector on Server", color = Dash.Text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("SSH into your server and run the verified installer:", color = Dash.Dim, fontSize = 12.sp)
+                    Spacer(Modifier.height(8.dp))
+
+                    val installCmd = "curl -fsSL https://github.com/skytech45/friday-one/releases/latest/download/install.sh | sudo bash"
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Dash.Bg)
+                            .border(1.dp, Dash.CardEdge, RoundedCornerShape(10.dp))
+                            .padding(10.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                installCmd,
+                                color = FridayBrandBlue,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(
+                                onClick = { clipboard.setText(AnnotatedString(installCmd)) },
+                                modifier = Modifier.size(28.dp),
+                            ) {
+                                Icon(Icons.Outlined.ContentCopy, "Copy", tint = Dash.Dim, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(18.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(FridayBrandBlue),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("2", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text("Start Pairing in Terminal", color = Dash.Text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Type this command in your server terminal:", color = Dash.Dim, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "fridayone",
+                        color = FridayStatusOk,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(FridayStatusOk.copy(alpha = 0.12f))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("When prompted, paste your one-time enrollment token:", color = Dash.Dim, fontSize = 12.sp)
+                    Spacer(Modifier.height(8.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Dash.Bg)
+                            .border(1.dp, Dash.CardEdge, RoundedCornerShape(10.dp))
+                            .padding(10.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                info.token,
+                                color = FridayBrandViolet,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(
+                                onClick = {
+                                    clipboard.setText(AnnotatedString(info.token))
+                                    copiedNotice = true
+                                },
+                                modifier = Modifier.size(28.dp),
+                            ) {
+                                Icon(
+                                    if (copiedNotice) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
+                                    "Copy Token",
+                                    tint = if (copiedNotice) FridayStatusOk else Dash.Dim,
+                                    modifier = Modifier.size(16.dp),
                                 )
                                 if (s.agents.isNotEmpty()) {
                                     Text(
@@ -356,126 +709,388 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
                             }
                         }
                     }
+                    if (copiedNotice) {
+                        Text("Token copied to clipboard!", color = FridayStatusOk, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            // STEP 3: Connect in App (QR Scan or Key)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Dash.Card),
+                shape = RoundedCornerShape(18.dp),
+                border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Dash.CardEdge)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(FridayBrandBlue),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("3", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text("Pair With This Device", color = Dash.Text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    }
+                    Spacer(Modifier.height(14.dp))
+
+                    // Mode Selection Tabs
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Dash.Bg)
+                            .padding(4.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (pairingModeTab == 0) FridayBrandBlue.copy(alpha = 0.2f) else Color.Transparent)
+                                .clickable { pairingModeTab = 0 }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.QrCodeScanner, null, tint = if (pairingModeTab == 0) FridayBrandBlue else Dash.Dim, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Scan Terminal QR", color = if (pairingModeTab == 0) FridayBrandBlue else Dash.Dim, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (pairingModeTab == 1) FridayBrandBlue.copy(alpha = 0.2f) else Color.Transparent)
+                                .clickable { pairingModeTab = 1 }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Key, null, tint = if (pairingModeTab == 1) FridayBrandBlue else Dash.Dim, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Pair with Key", color = if (pairingModeTab == 1) FridayBrandBlue else Dash.Dim, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    if (pairingModeTab == 0) {
+                        // Scan QR Mode
+                        Text(
+                            "Your server terminal will display an ASCII QR code. Point your camera at the terminal to pair instantly.",
+                            color = Dash.Dim,
+                            fontSize = 12.sp,
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        Button(
+                            onClick = {
+                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                            },
+                            enabled = !claiming,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = FridayBrandBlue),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Icon(Icons.Outlined.QrCodeScanner, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Launch Camera & Scan QR", fontWeight = FontWeight.SemiBold)
+                        }
+                    } else {
+                        // Pair with Key Mode
+                        Text(
+                            "Enter the 16–20 digit numeric code shown in your server terminal:",
+                            color = Dash.Dim,
+                            fontSize = 12.sp,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = codeInput,
+                            onValueChange = { raw ->
+                                codeInput = raw.filter(Char::isDigit).take(20)
+                            },
+                            placeholder = { Text("e.g. 1029 4820 1928 3920", color = Dash.Dim.copy(alpha = 0.5f)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = cloudFieldColors(),
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                claiming = true
+                                errorMessage = null
+                                statusMessage = "Claiming enrollment and verifying connector..."
+                                scope.launch {
+                                    runCatching {
+                                        client.claimEnrollment(accessToken, info.enrollmentId, codeInput)
+                                    }.onSuccess {
+                                        statusMessage = "Server paired and verified online! ✓"
+                                        delay(1200)
+                                        onPairingComplete()
+                                    }.onFailure {
+                                        errorMessage = "Claim failed: ${it.message}"
+                                        claiming = false
+                                        statusMessage = null
+                                    }
+                                }
+                            },
+                            enabled = !claiming && codeInput.length >= 16,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = FridayBrandBlue),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            if (claiming) {
+                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Text("Pair with Key", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+
+                    statusMessage?.let {
+                        Spacer(Modifier.height(12.dp))
+                        Text(it, color = FridayStatusOk, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    }
+                    errorMessage?.let {
+                        Spacer(Modifier.height(12.dp))
+                        Text(it, color = FridayStatusCrit, fontSize = 12.sp)
+                    }
                 }
             }
         }
     }
+}
 
-    enrollment?.let { info ->
-        // v2 pairing: install command with the one-time token, then QR/code.
-        var codeInput by remember(info.enrollmentId) { mutableStateOf("") }
-        var claiming by remember(info.enrollmentId) { mutableStateOf(false) }
-        val context = androidx.compose.ui.platform.LocalContext.current
-        val scope2 = rememberCoroutineScope()
+// ============================================================================
+// 4. MAIN SERVER DASHBOARD VIEW
+// ============================================================================
+@Composable
+private fun DashboardView(
+    session: CloudSession,
+    servers: List<CloudServer>?,
+    loadError: String?,
+    onAddServer: () -> Unit,
+    onOpenChat: (CloudServer) -> Unit,
+    onOpenSecurity: () -> Unit,
+    onReload: () -> Unit,
+    onSignedOut: () -> Unit,
+) {
+    val onlineCount = servers?.count { it.online } ?: 0
+    val totalCount = servers?.size ?: 0
+    val staleCount = totalCount - onlineCount
 
-        // Camera permission -> zxing scanner -> parse fridayone://pair?e=&c=
-        val qrLauncher = rememberLauncherForActivityResult(
-            com.journeyapps.barcodescanner.ScanContract(),
-        ) { result ->
-            val contents = result.contents ?: return@rememberLauncherForActivityResult
-            val uri = runCatching { android.net.Uri.parse(contents) }.getOrNull()
-            if (uri?.scheme == "fridayone" && uri.host == "pair") {
-                val scannedCode = uri.getQueryParameter("c") ?: ""
-                val scannedEnrollment = uri.getQueryParameter("e") ?: info.enrollmentId
-                if (scannedCode.length in 16..20) {
-                    claiming = true
-                    scope2.launch {
-                        runCatching {
-                            client.claimEnrollment(session.accessToken, scannedEnrollment, scannedCode)
-                        }.onSuccess {
-                            enrollment = null
-                            reload()
-                        }.onFailure { loadError = it.message; enrollment = null }
-                    }
-                } else {
-                    loadError = "QR did not contain a pairing code"
-                }
-            } else if (contents.length in 16..20 && contents.all(Char::isDigit)) {
-                codeInput = contents
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Dash.Bg)
+            .padding(horizontal = 16.dp, vertical = 20.dp),
+    ) {
+        // App Top Bar
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "FRIDAY One",
+                    color = Dash.Text,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.3).sp,
+                )
+                Text(session.email, color = Dash.Dim, fontSize = 12.sp)
+            }
+            IconButton(onClick = onOpenSecurity) {
+                Icon(Icons.Outlined.Security, "Security", tint = FridayBrandBlue)
+            }
+            IconButton(onClick = onReload) {
+                Icon(Icons.Outlined.Refresh, "Refresh", tint = Dash.Dim)
+            }
+            TextButton(onClick = onSignedOut) {
+                Text("Sign out", color = FridayStatusCrit, fontSize = 13.sp)
             }
         }
-        val scanLauncher = rememberLauncherForActivityResult(
-            androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-        ) { granted ->
-            if (granted) qrLauncher.launch(
-                com.journeyapps.barcodescanner.ScanOptions().apply {
-                    setPrompt("Point at the FRIDAY pairing QR")
-                    setBeepEnabled(false)
-                    setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
-                },
-            )
+
+        Spacer(Modifier.height(16.dp))
+
+        // Metric Summary Cards
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            MetricCard(title = "SERVERS", value = "$totalCount", color = Dash.Text, modifier = Modifier.weight(1f))
+            MetricCard(title = "ONLINE", value = "$onlineCount", color = FridayStatusOk, modifier = Modifier.weight(1f))
+            MetricCard(title = "OFFLINE", value = "$staleCount", color = if (staleCount > 0) FridayStatusWarn else Dash.Dim, modifier = Modifier.weight(1f))
         }
 
-        AlertDialog(
-            onDismissRequest = { enrollment = null },
-            title = { Text("Pair this server", color = Dash.Text) },
-            text = {
-                Column {
-                    Text("1. On the VPS, run:", color = Dash.Dim, fontSize = 12.sp)
-                    Text(
-                        "curl -fsSL https://github.com/skytech45/friday-one/releases/latest/download/install.sh | sudo bash -s -- enroll",
-                        color = Dash.Text, fontSize = 11.sp,
-                    )
-                    Text("2. Paste the one-time token:", color = Dash.Dim, fontSize = 12.sp)
-                    Text(info.token, color = Dash.Accent, fontSize = 11.sp)
-                    Text("3. Scan the QR on the terminal — or type the code:", color = Dash.Dim, fontSize = 12.sp)
-                    Button(
-                        onClick = {
-                            scanLauncher.launch(android.Manifest.permission.CAMERA)
-                        },
-                        enabled = !claiming,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Scan QR") }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = codeInput,
-                        onValueChange = { codeInput = it.filter(Char::isDigit).take(20) },
-                        singleLine = true,
-                        colors = cloudFieldColors(),
-                    )
-                    if (claiming) Text("claiming…", color = Dash.Dim, fontSize = 11.sp)
+        Spacer(Modifier.height(20.dp))
+
+        // Section Title & Add Server Action
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Your Servers",
+                color = Dash.Text,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            FilledTonalButton(
+                onClick = onAddServer,
+                colors = ButtonDefaults.filledTonalButtonColors(containerColor = FridayBrandBlue.copy(alpha = 0.15f)),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                Icon(Icons.Outlined.Add, null, tint = FridayBrandBlue, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Add Server", color = FridayBrandBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        loadError?.let { Text(it, color = FridayStatusCrit, fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp)) }
+
+        when {
+            servers == null -> {
+                Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = FridayBrandBlue)
                 }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !claiming && codeInput.length >= 16,
-                    onClick = {
-                        claiming = true
-                        scope.launch {
-                            runCatching { client.claimEnrollment(session.accessToken, info.enrollmentId, codeInput) }
-                                .onSuccess {
-                                    enrollment = null
-                                    reload()
-                                }
-                                .onFailure { loadError = it.message; enrollment = null }
+            }
+            servers.isEmpty() -> {
+                // Empty State
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Dash.Card),
+                    shape = RoundedCornerShape(18.dp),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Dash.CardEdge)),
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(Icons.Outlined.Cloud, null, tint = Dash.Dim, modifier = Modifier.size(48.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text("No Servers Enrolled", color = Dash.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Pair your Linux cloud server to manage AI agent sessions securely from this device.",
+                            color = Dash.Dim,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(18.dp))
+                        Button(
+                            onClick = onAddServer,
+                            colors = ButtonDefaults.buttonColors(containerColor = FridayBrandBlue),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Text("Pair Server Now")
                         }
-                    },
-                ) { Text("Pair", color = Dash.Accent) }
-            },
-            dismissButton = {
-                TextButton(onClick = { enrollment = null }) { Text("Cancel", color = Dash.Dim) }
-            },
-        )
+                    }
+                }
+            }
+            else -> {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(servers) { server ->
+                        ServerCard(
+                            server = server,
+                            onOpenChat = { onOpenChat(server) },
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
+private fun MetricCard(title: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Dash.Card),
+        shape = RoundedCornerShape(14.dp),
+        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Dash.CardEdge)),
+        modifier = modifier,
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(title, color = Dash.Dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(value, color = color, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun ServerCard(server: CloudServer, onOpenChat: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Dash.Card),
+        shape = RoundedCornerShape(16.dp),
+        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Dash.CardEdge)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Status Dot
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(if (server.online) FridayStatusOk else Dash.Dim),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(server.name, color = Dash.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (server.online) "Online · Active" else "State: ${server.enrollmentState}",
+                        color = if (server.online) FridayStatusOk else Dash.Dim,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+            Button(
+                onClick = onOpenChat,
+                enabled = server.enrollmentState == "active",
+                colors = ButtonDefaults.buttonColors(containerColor = if (server.online) FridayBrandBlue else Dash.CardEdge),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                Text("Open Chat", fontSize = 13.sp, color = if (server.online) Color.White else Dash.Dim)
+            }
+        }
+    }
+}
+
+// ============================================================================
+// 5. LIVE AI AGENT CHAT VIEW (with streaming & permission approval cards)
+// ============================================================================
+@Composable
 private fun ChatView(
-    session: com.friday.one.data.CloudSession,
+    session: CloudSession,
     server: CloudServer,
     gatewayUrl: String,
     onBack: () -> Unit,
 ) {
-    val client = remember(gatewayUrl) {
-        GatewayClient(gatewayUrl, { session.accessToken })
-    }
-    var messages by remember { mutableStateOf(listOf<Pair<String, Boolean>>()) } // text, fromUser
+    val client = remember(gatewayUrl) { GatewayClient(gatewayUrl, { session.accessToken }) }
+    var messages by remember { mutableStateOf(listOf<Pair<String, Boolean>>()) } // text to isUser
     var input by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("connecting…") }
+    var status by remember { mutableStateOf("Connecting to gateway...") }
     var pendingJob by remember { mutableStateOf<String?>(null) }
-    var pendingPerm by remember { mutableStateOf<Pair<String, String>?>(null) }
-    // Capability-driven pickers (plan §9): populated from what the connector
-    // reported, with a safe fallback so an older connector still works.
+    var pendingPerm by remember { mutableStateOf<Pair<String, String>?>(null) } // requestId to operation
+
+    // Capability-driven pickers (plan §9)
     val selectableAgents = remember(server.id) {
         server.agents.filter { it.health == "healthy" }.ifEmpty { server.agents }
     }
@@ -490,23 +1105,23 @@ private fun ChatView(
     LaunchedEffect(server.id) {
         client.events().collect { ev ->
             when (ev) {
-                is GatewayEvent.Connected -> status = "online"
-                GatewayEvent.Disconnected -> status = "offline"
+                is GatewayEvent.Connected -> status = "Connected to ${server.name}"
+                GatewayEvent.Disconnected -> status = "Gateway Disconnected"
                 is GatewayEvent.JobAccepted -> pendingJob = ev.jobId
                 is GatewayEvent.JobStarted -> {}
                 is GatewayEvent.Delta -> {
                     messages = messages + Pair(ev.text, false)
                 }
                 is GatewayEvent.Completed -> {
-                    messages = messages + Pair("✓ done (${ev.stopReason})", false)
+                    messages = messages + Pair("✓ Completed (${ev.stopReason})", false)
                     pendingJob = null
                 }
                 is GatewayEvent.Failed -> {
-                    messages = messages + Pair("✗ failed: ${ev.reason}", false)
+                    messages = messages + Pair("✗ Failed: ${ev.reason}", false)
                     pendingJob = null
                 }
                 is GatewayEvent.Rejected -> {
-                    messages = messages + Pair("✗ rejected: ${ev.reason}", false)
+                    messages = messages + Pair("✗ Rejected: ${ev.reason}", false)
                     pendingJob = null
                 }
                 is GatewayEvent.PermissionRequested -> {
@@ -516,125 +1131,253 @@ private fun ChatView(
         }
     }
 
-    Column(Modifier.fillMaxSize().background(Dash.Bg)) {
-        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { client.close(); onBack() }) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, null, tint = Dash.Text)
-            }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Dash.Bg),
+    ) {
+        // Chat Header
+        Surface(
+            color = Dash.Card,
+            shadowElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column {
-                Text(server.name, color = Dash.Text, fontWeight = FontWeight.SemiBold)
-                Text(status, color = if (status == "online") Dash.Accent else Dash.Dim, fontSize = 11.sp)
-            }
-        }
-        if (selectableAgents.size > 1) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Agent", color = Dash.Dim, fontSize = 11.sp)
-                selectableAgents.forEach { a ->
-                    FilterChip(
-                        selected = selectedAgent == a.adapter,
-                        onClick = { selectedAgent = a.adapter },
-                        label = {
-                            Text(
-                                a.adapter.replaceFirstChar { it.uppercase() } +
-                                    (a.version?.let { " · $it" } ?: ""),
-                                fontSize = 11.sp,
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = { client.close(); onBack() }) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = Dash.Text)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(server.name, color = Dash.Text, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (status.startsWith("Connected")) FridayStatusOk else FridayStatusWarn),
                             )
-                        },
-                    )
+                            Spacer(Modifier.width(6.dp))
+                            Text(status, color = Dash.Dim, fontSize = 11.sp)
+                        }
+                    }
+                    // Active Agent Indicator
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(FridayBrandBlue.copy(alpha = 0.15f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        val activeLabel = selectedAgent?.replaceFirstChar { it.uppercase() } ?: "Agent"
+                        Text(activeLabel, color = FridayBrandBlue, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                // Capability Pickers (if multiple agents or projects are available)
+                if (selectableAgents.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Agent:", color = Dash.Dim, fontSize = 11.sp)
+                        selectableAgents.forEach { a ->
+                            FilterChip(
+                                selected = selectedAgent == a.adapter,
+                                onClick = { selectedAgent = a.adapter },
+                                label = {
+                                    Text(
+                                        a.adapter.replaceFirstChar { it.uppercase() } +
+                                            (a.version?.let { " · $it" } ?: ""),
+                                        fontSize = 11.sp,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                if (server.projects.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Project:", color = Dash.Dim, fontSize = 11.sp)
+                        server.projects.forEach { p ->
+                            FilterChip(
+                                selected = selectedRoot == p.root,
+                                onClick = { selectedRoot = p.root },
+                                label = {
+                                    Text((p.label ?: p.root).take(20), fontSize = 11.sp)
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
-        if (server.projects.size > 1) {
+
+        // Messages Stream
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(messages) { (text, isUser) ->
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart,
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isUser) FridayBrandBlue else Dash.Card,
+                        ),
+                        shape = RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isUser) 16.dp else 4.dp,
+                            bottomEnd = if (isUser) 4.dp else 16.dp,
+                        ),
+                        border = if (!isUser) CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Dash.CardEdge)) else null,
+                        modifier = Modifier.widthIn(max = 300.dp),
+                    ) {
+                        Text(
+                            text = text,
+                            color = if (isUser) Color.White else Dash.Text,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        // Inline Permission Approval Card (FR-08)
+        pendingPerm?.let { (reqId, op) ->
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Dash.Card),
+                shape = RoundedCornerShape(16.dp),
+                border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(FridayStatusWarn)),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Security, null, tint = FridayStatusWarn, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Permission Required", color = FridayStatusWarn, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text("The AI agent wants to execute: $op", color = Dash.Text, fontSize = 13.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { client.decide(reqId, false); pendingPerm = null },
+                            colors = ButtonDefaults.buttonColors(containerColor = FridayStatusCrit),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Deny", color = Color.White)
+                        }
+                        Button(
+                            onClick = { client.decide(reqId, true); pendingPerm = null },
+                            colors = ButtonDefaults.buttonColors(containerColor = FridayStatusOk),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Approve", color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Active Working & Cancel Bar
+        if (pendingJob != null) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Dash.CardEdge.copy(alpha = 0.5f))
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Project", color = Dash.Dim, fontSize = 11.sp)
-                server.projects.forEach { p ->
-                    FilterChip(
-                        selected = selectedRoot == p.root,
-                        onClick = { selectedRoot = p.root },
-                        label = {
-                            Text((p.label ?: p.root).take(18), fontSize = 11.sp)
-                        },
-                    )
+                CircularProgressIndicator(color = FridayBrandBlue, modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Agent executing prompt...", color = Dash.Dim, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                TextButton(
+                    onClick = {
+                        client.cancel(pendingJob!!)
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = FridayStatusCrit),
+                ) {
+                    Icon(Icons.Outlined.Stop, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Cancel", fontSize = 12.sp)
                 }
             }
         }
-        LazyColumn(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-            items(messages) { (text, fromUser) ->
-                Box(Modifier.fillMaxWidth(), contentAlignment = if (fromUser) Alignment.CenterEnd else Alignment.CenterStart) {
-                    Text(
-                        text,
-                        color = if (fromUser) Dash.Accent else Dash.Text,
-                        fontSize = 14.sp,
-                        modifier = Modifier
-                            .padding(vertical = 4.dp)
-                            .background(if (fromUser) Dash.Card else Dash.Bg)
-                            .padding(6.dp),
-                    )
-                }
-            }
-        }
-        pendingPerm?.let { (requestId, operation) ->
-            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Allow $operation?", color = Dash.Text, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                TextButton(onClick = { client.decide(requestId, false); pendingPerm = null }) { Text("Deny", color = Dash.Bad) }
-                TextButton(onClick = { client.decide(requestId, true); pendingPerm = null }) { Text("Allow", color = Dash.Accent) }
-            }
-        }
-        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+
+        // Message Input Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Dash.Card)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             OutlinedTextField(
-                value = input, onValueChange = { input = it },
-                placeholder = { Text("Message ${server.name}…", color = Dash.Dim) },
-                modifier = Modifier.weight(1f), colors = cloudFieldColors(),
-                maxLines = 3,
+                value = input,
+                onValueChange = { input = it },
+                placeholder = { Text("Prompt AI agent on ${server.name}…", color = Dash.Dim, fontSize = 14.sp) },
+                modifier = Modifier.weight(1f),
+                colors = cloudFieldColors(),
+                shape = RoundedCornerShape(14.dp),
+                maxLines = 4,
             )
             Spacer(Modifier.width(8.dp))
-            Button(
+            IconButton(
                 onClick = {
-                    val text = input.trim(); if (text.isEmpty()) return@Button
+                    val promptText = input.trim()
+                    if (promptText.isEmpty()) return@IconButton
                     input = ""
-                    messages = messages + Pair(text, true)
-                    val corr = java.util.UUID.randomUUID().toString()
+                    messages = messages + Pair(promptText, true)
+                    val corr = UUID.randomUUID().toString()
                     scope.launch {
-                        // Root + agent are the connector's enforced boundary:
-                        // it validates both again before execution.
-                        val ok = client.submitPrompt(
-                            server.id, selectedRoot, text, corr, selectedAgent,
+                        val dispatched = client.submitPrompt(
+                            server.id, selectedRoot, promptText, corr, selectedAgent,
                         )
-                        if (!ok) messages = messages + Pair("✗ not connected", false)
+                        if (!dispatched) {
+                            messages = messages + Pair("✗ Could not dispatch prompt to gateway", false)
+                        }
                     }
                 },
-                enabled = status == "online" && pendingJob == null,
-            ) { Text("Send") }
-        }
-        pendingJob?.let {
-            Text("working…", color = Dash.Dim, fontSize = 11.sp, modifier = Modifier.padding(8.dp))
+                enabled = pendingJob == null && input.isNotBlank(),
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .background(if (pendingJob == null && input.isNotBlank()) FridayBrandBlue else Dash.CardEdge),
+            ) {
+                Icon(Icons.Outlined.Send, "Send", tint = Color.White, modifier = Modifier.size(20.dp))
+            }
         }
     }
-}
-
-@Composable
-
-private fun LiveDot(online: Boolean) {
-    Box(
-        Modifier.size(8.dp).background(if (online) Dash.Accent else Dash.Dim, shape = MaterialTheme.shapes.small),
-    )
 }
 
 @Composable
 private fun cloudFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedTextColor = Dash.Text,
     unfocusedTextColor = Dash.Text,
-    focusedBorderColor = Dash.Accent,
-    unfocusedBorderColor = Dash.Dim,
-    cursorColor = Dash.Accent,
-    focusedLabelColor = Dash.Accent,
+    focusedBorderColor = FridayBrandBlue,
+    unfocusedBorderColor = Dash.CardEdge,
+    cursorColor = FridayBrandBlue,
+    focusedLabelColor = FridayBrandBlue,
     unfocusedLabelColor = Dash.Dim,
+    focusedContainerColor = Dash.Card,
+    unfocusedContainerColor = Dash.Card,
 )

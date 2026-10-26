@@ -57,20 +57,22 @@ import androidx.compose.ui.unit.sp
  */
 
 object Dash {
-    val Bg = Color(0xFF08090B)
-    val Card = Color(0xFF11141A)
-    val CardEdge = Color(0xFF1D222B)
-    val Text = Color(0xFFE7ECF3)
-    val Dim = Color(0xFF8A94A6)
-    val Accent = Color(0xFF34D399)
-    val Warn = Color(0xFFFBBF24)
-    val Bad = Color(0xFFF87171)
-    val Blue = Color(0xFF60A5FA)
+    val Bg = Color(0xFF080B12)
+    val Card = Color(0xFF101722)
+    val CardEdge = Color(0xFF263244)
+    val Text = Color(0xFFF4F7FB)
+    val Dim = Color(0xFFA7B4C7)
+    val Accent = Color(0xFF36A8FF)
+    val Violet = Color(0xFF7657FF)
+    val Ok = Color(0xFF28D98B)
+    val Warn = Color(0xFFFFB547)
+    val Bad = Color(0xFFFF5D6C)
+    val Blue = Color(0xFF36A8FF)
 
     /** Green -> amber -> red as load rises. Interpolated, never stepped. */
     fun heat(pct: Float): Color = when {
-        pct < 60f -> blend(Accent, Warn, (pct / 60f).coerceIn(0f, 1f) * 0.35f)
-        pct < 85f -> blend(Accent, Warn, 1f - ((85f - pct) / 25f) * 0.65f)
+        pct < 60f -> blend(Ok, Warn, (pct / 60f).coerceIn(0f, 1f) * 0.35f)
+        pct < 85f -> blend(Ok, Warn, 1f - ((85f - pct) / 25f) * 0.65f)
         else -> blend(Warn, Bad, ((pct - 85f) / 15f).coerceIn(0f, 1f))
     }
 
