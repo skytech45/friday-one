@@ -699,13 +699,7 @@ private fun ServerPairingScreen(
                                     tint = if (copiedNotice) FridayStatusOk else Dash.Dim,
                                     modifier = Modifier.size(16.dp),
                                 )
-                                if (s.agents.isNotEmpty()) {
-                                    Text(
-                                        s.agents.joinToString(", ") { it.adapter } +
-                                            " · ${s.projects.size} root(s)",
-                                        color = Dash.Dim, fontSize = 10.sp,
-                                    )
-                                }
+
                             }
                         }
                     }
@@ -1057,6 +1051,13 @@ private fun ServerCard(server: CloudServer, onOpenChat: () -> Unit) {
                         if (server.online) "Online · Active" else "State: ${server.enrollmentState}",
                         color = if (server.online) FridayStatusOk else Dash.Dim,
                         fontSize = 12.sp,
+                    )
+                }
+                if (server.agents.isNotEmpty()) {
+                    Text(
+                        server.agents.joinToString(", ") { it.adapter } +
+                            " · ${server.projects.size} root(s)",
+                        color = Dash.Dim, fontSize = 10.sp,
                     )
                 }
             }
