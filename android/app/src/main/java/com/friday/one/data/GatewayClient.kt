@@ -1,9 +1,14 @@
 package com.friday.one.data
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -42,6 +47,7 @@ class GatewayClient(
     private var ws: WebSocket? = null
     private var serverId: String = "00000000-0000-0000-0000-000000000000"
     private var seq = 0
+    private var heartbeat: kotlinx.coroutines.Job? = null
     val online = MutableStateFlow(false)
 
     fun events(): Flow<GatewayEvent> = callbackFlow {
@@ -49,6 +55,15 @@ class GatewayClient(
         ws = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 send("auth.app", buildJsonObject { put("token", accessToken() ?: "") })
+                // Heartbeat every 15 s (protocol §6): without traffic the
+                // cloudflared tunnel drops idle WSS sockets ~60 s in.
+                heartbeat?.cancel()
+                heartbeat = CoroutineScope(Dispatchers.IO).launch {
+                    while (true) {
+                        delay(15_000)
+                        send("app.heartbeat", buildJsonObject { })
+                    }
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -77,18 +92,20 @@ class GatewayClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                heartbeat?.cancel()
                 online.value = false
                 trySend(GatewayEvent.Disconnected)
                 channel.close()
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                heartbeat?.cancel()
                 online.value = false
                 trySend(GatewayEvent.Disconnected)
                 channel.close()
             }
         })
-        awaitClose { ws?.close(1000, "ui_closed") }
+        awaitClose { heartbeat?.cancel(); ws?.close(1000, "ui_closed") }
     }
 
     fun submitPrompt(

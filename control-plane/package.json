@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "FRIDAY One control plane — Vercel serverless APIs: enrollment, pairing, token verification (SYSTEM_DESIGN §11).",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@vercel/node": "^3.0.0",
     "jose": "^5.9.0"

@@ -22,6 +22,7 @@ logs/
 *.pid
 
 # ---- OS / editor cruft ----
+legacy-v1/
 .DS_Store
 *.swp
 .idea/
