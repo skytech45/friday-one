@@ -205,6 +205,8 @@ async function handleConnectorMessage(conn: ConnectorConn, env: Envelope): Promi
 
 async function handleAppMessage(conn: AppConn, env: Envelope): Promise<void> {
   switch (env.event_type) {
+    case "app.heartbeat": // keepalive from app clients; no durable effect
+      return;
     case "command.submit": {
       const p = env.payload as {
         operation?: string;

@@ -1,6 +1,8 @@
 package com.friday.one.data
 
 import com.friday.one.BuildConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -41,9 +43,10 @@ data class Job(val id: String, val operation: String, val state: String, val upd
 data class AuditEvent(val action: String, val at: String)
 
 /**
- * Control-plane REST client: list servers, create an enrollment (pairing
- * code). Authenticated with the Supabase access token — identity is derived
- * server-side from that token.
+ * Control-plane REST client. EVERY network call runs on Dispatchers.IO —
+ * OkHttp's execute() is blocking, and Android throws
+ * NetworkOnMainThreadException if it runs on the composition (main) scope.
+ * All methods are suspend for the same reason.
  */
 class ControlPlaneClient {
     private val json = Json { ignoreUnknownKeys = true }
@@ -52,26 +55,19 @@ class ControlPlaneClient {
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    fun listServers(accessToken: String): List<CloudServer> {
-        val req = Request.Builder()
-            .url("${BuildConfig.CONTROL_PLANE_URL}/api/v1/servers")
-            .header("Authorization", "Bearer $accessToken")
-            .get()
-            .build()
-        http.newCall(req).execute().use { resp ->
-            val text = resp.body?.string() ?: ""
-            if (!resp.isSuccessful) error("list failed (${resp.code})")
-            val arr = json.parseToJsonElement(text)
-                .let { (it as? JsonObject)?.get("servers") } ?: return emptyList()
-            return json.decodeFromString(
-                kotlinx.serialization.builtins.ListSerializer(CloudServerDto.serializer()),
-                arr.toString(),
-            ).map { CloudServer(it.id, it.name, it.enrollment_state, it.online) }
+    suspend fun listServers(accessToken: String): List<CloudServer> = withContext(Dispatchers.IO) {
+        val arr = getArray(accessToken, "/api/v1/servers", "servers")
+        arr.map { obj ->
+            CloudServer(
+                id = obj.s("id"), name = obj.s("name"),
+                enrollmentState = obj.s("enrollment_state"),
+                online = obj.s("online") == "true",
+            )
         }
     }
 
     /** v2 enrollment: returns enrollment id + one-time install token. */
-    fun createEnrollment(accessToken: String, name: String): EnrollmentInfo {
+    suspend fun createEnrollment(accessToken: String, name: String): EnrollmentInfo = withContext(Dispatchers.IO) {
         val body = buildJsonObject { put("name", name) }
             .toString().toRequestBody("application/json".toMediaType())
         val req = Request.Builder()
@@ -84,12 +80,12 @@ class ControlPlaneClient {
             if (!resp.isSuccessful) error("enrollment failed (${resp.code})")
             val obj = json.parseToJsonElement(text) as JsonObject
             fun s(k: String) = obj[k]?.toString()?.trim('"') ?: error("no $k")
-            return EnrollmentInfo(s("enrollment_id"), s("server_id"), s("enrollment_token"), s("expires_at"))
+            EnrollmentInfo(s("enrollment_id"), s("server_id"), s("enrollment_token"), s("expires_at"))
         }
     }
 
     /** v2 claim: submit the 16-20 digit code shown on the server terminal. */
-    fun claimEnrollment(accessToken: String, enrollmentId: String, code: String): String {
+    suspend fun claimEnrollment(accessToken: String, enrollmentId: String, code: String): String = withContext(Dispatchers.IO) {
         val body = buildJsonObject { put("code", code) }
             .toString().toRequestBody("application/json".toMediaType())
         val req = Request.Builder()
@@ -104,25 +100,22 @@ class ControlPlaneClient {
                     ?.get("error")?.toString()?.trim('"') ?: "${resp.code}"
                 error("claim failed: $reason")
             }
-            return "claim_requested"
+            "claim_requested"
         }
     }
 
-    fun revokeServer(accessToken: String, serverId: String) {
+    suspend fun revokeServer(accessToken: String, serverId: String): Unit = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("${BuildConfig.CONTROL_PLANE_URL}/api/v1/servers/$serverId/revoke")
             .header("Authorization", "Bearer $accessToken")
             .post(byteArrayOf().toRequestBody(null))
             .build()
-        http.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) error("revoke failed (${resp.code})")
-        }
+        http.newCall(req).execute().use { if (!it.isSuccessful) error("revoke failed (${it.code})") }
     }
 
     // ---- policies / jobs / audit (plan v2 §10) ----------------------------
-    fun policies(accessToken: String): List<Policy> {
-        val arr = getArray(accessToken, "/api/v1/policies", "policies")
-        return arr.map { obj ->
+    suspend fun policies(accessToken: String): List<Policy> = withContext(Dispatchers.IO) {
+        getArray(accessToken, "/api/v1/policies", "policies").map { obj ->
             Policy(
                 id = obj.s("id"), serverId = obj.s("server_id").ifEmpty { "-" },
                 serverName = obj.s("server_name").ifEmpty { "all servers" },
@@ -132,7 +125,7 @@ class ControlPlaneClient {
         }
     }
 
-    fun addPolicy(accessToken: String, serverId: String?, action: String, decision: String) {
+    suspend fun addPolicy(accessToken: String, serverId: String?, action: String, decision: String): Unit = withContext(Dispatchers.IO) {
         val body = buildJsonObject {
             put("action", action); put("decision", decision)
             serverId?.let { put("server_id", it) }
@@ -143,41 +136,62 @@ class ControlPlaneClient {
         http.newCall(req).execute().use { if (!it.isSuccessful) error("add failed (${it.code})") }
     }
 
-    fun setPolicyEnabled(accessToken: String, id: String, enabled: Boolean) {
+    suspend fun setPolicyEnabled(accessToken: String, id: String, enabled: Boolean): Unit = withContext(Dispatchers.IO) {
         patch(accessToken, "/api/v1/policies/$id", buildJsonObject { put("enabled", enabled) })
     }
 
-    fun deletePolicy(accessToken: String, id: String) {
+    suspend fun deletePolicy(accessToken: String, id: String): Unit = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("${BuildConfig.CONTROL_PLANE_URL}/api/v1/policies/$id")
             .header("Authorization", "Bearer $accessToken").delete().build()
         http.newCall(req).execute().use { if (!it.isSuccessful) error("delete failed (${it.code})") }
     }
 
-    fun jobs(accessToken: String): List<Job> =
+    suspend fun jobs(accessToken: String): List<Job> = withContext(Dispatchers.IO) {
         getArray(accessToken, "/api/v1/jobs", "jobs").map { obj ->
             Job(obj.s("id").take(8), obj.s("operation"), obj.s("state"), obj.s("updated_at").take(19))
         }
+    }
 
-    fun audit(accessToken: String): List<AuditEvent> =
+    suspend fun audit(accessToken: String): List<AuditEvent> = withContext(Dispatchers.IO) {
         getArray(accessToken, "/api/v1/audit", "events").map { obj ->
             AuditEvent(obj.s("action"), obj.s("created_at").take(19).replace("T", " "))
         }
+    }
 
-    private fun getArray(accessToken: String, path: String, key: String): List<JsonObject> {
+    /**
+     * Runtime gateway discovery: the control plane returns the current
+     * gateway WSS URL from app_config (the tunnel service keeps it fresh),
+     * so a tunnel rotation needs no APK rebuild. Falls back to null.
+     */
+    suspend fun gatewayUrl(accessToken: String?): String? = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("${BuildConfig.CONTROL_PLANE_URL}/api/v1/health")
+            .apply { if (accessToken?.isNotEmpty() == true) header("Authorization", "Bearer $accessToken") }
+            .get().build()
+        runCatching {
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: return@withContext null
+                (json.parseToJsonElement(text) as? JsonObject)?.get("gateway_url")
+                    ?.toString()?.trim('"')?.ifEmpty { null }
+            }
+        }.getOrNull()
+    }
+
+    private suspend fun getArray(accessToken: String, path: String, key: String): List<JsonObject> = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("${BuildConfig.CONTROL_PLANE_URL}$path")
             .header("Authorization", "Bearer $accessToken").get().build()
         http.newCall(req).execute().use { resp ->
             val text = resp.body?.string() ?: ""
             if (!resp.isSuccessful) error("$path failed (${resp.code})")
-            val obj = json.parseToJsonElement(text) as? JsonObject ?: return emptyList()
-            return (obj[key] as? kotlinx.serialization.json.JsonArray)
+            val obj = json.parseToJsonElement(text) as? JsonObject ?: return@withContext emptyList()
+            (obj[key] as? kotlinx.serialization.json.JsonArray)
                 ?.mapNotNull { it as? JsonObject } ?: emptyList()
         }
     }
 
-    private fun patch(accessToken: String, path: String, body: JsonObject) {
+    private suspend fun patch(accessToken: String, path: String, body: JsonObject): Unit = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("${BuildConfig.CONTROL_PLANE_URL}$path")
             .header("Authorization", "Bearer $accessToken")
@@ -186,16 +200,4 @@ class ControlPlaneClient {
     }
 
     private fun JsonObject.s(k: String): String = this[k]?.toString()?.trim('"') ?: ""
-
-    companion object {
-        fun newJobId(): String = UUID.randomUUID().toString()
-    }
 }
-
-@kotlinx.serialization.Serializable
-private data class CloudServerDto(
-    val id: String,
-    val name: String,
-    val enrollment_state: String,
-    val online: Boolean,
-)

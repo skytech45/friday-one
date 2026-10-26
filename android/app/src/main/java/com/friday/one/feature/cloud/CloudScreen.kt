@@ -149,7 +149,7 @@ private fun LoginView(
                 scope.launch {
                     runCatching { auth.login(email.trim(), password) }
                         .onSuccess(onSignedIn)
-                        .onFailure { error = it.message ?: "failed" }
+                        .onFailure { error = it.javaClass.simpleName + ": " + (it.message ?: "unknown"); android.util.Log.e("FRIDAY-AUTH", "login failed", it) }
                     busy = false
                 }
             },
@@ -260,16 +260,31 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
 
     suspend fun reload() {
         try { servers = client.listServers(session.accessToken); loadError = null }
-        catch (e: Exception) { loadError = e.message }
+        catch (e: Exception) {
+            // A 401 here after SupabaseAuth's auto-refresh means the session
+            // is truly dead — surface login instead of an error loop.
+            if (e.message?.contains("401") == true) onSignedOut()
+            else loadError = e.message
+        }
     }
-    LaunchedEffect(session.accessToken) { reload() }
+    var gatewayUrl by remember { mutableStateOf<String?>(com.friday.one.BuildConfig.GATEWAY_URL) }
+
+    LaunchedEffect(session.accessToken) {
+        reload()
+        // Runtime gateway discovery: prefer the URL the control plane knows
+        // (fresh after tunnel churn) over the build-time default.
+        client.gatewayUrl(session.accessToken)?.let { gatewayUrl = it }
+    }
 
     chatServer?.let { srv ->
-        ChatView(
-            session = session,
-            server = srv,
-            onBack = { chatServer = null; scope.launch { reload() } },
-        )
+        gatewayUrl?.let { gw ->
+            ChatView(
+                session = session,
+                server = srv,
+                gatewayUrl = gw,
+                onBack = { chatServer = null; scope.launch { reload() } },
+            )
+        }
         return
     }
 
@@ -441,10 +456,11 @@ private fun DashboardView(auth: SupabaseAuth, session: com.friday.one.data.Cloud
 private fun ChatView(
     session: com.friday.one.data.CloudSession,
     server: CloudServer,
+    gatewayUrl: String,
     onBack: () -> Unit,
 ) {
-    val client = remember {
-        GatewayClient(com.friday.one.BuildConfig.GATEWAY_URL, { session.accessToken })
+    val client = remember(gatewayUrl) {
+        GatewayClient(gatewayUrl, { session.accessToken })
     }
     var messages by remember { mutableStateOf(listOf<Pair<String, Boolean>>()) } // text, fromUser
     var input by remember { mutableStateOf("") }
@@ -523,7 +539,7 @@ private fun ChatView(
                     val text = input.trim(); if (text.isEmpty()) return@Button
                     input = ""
                     messages = messages + Pair(text, true)
-                    val corr = ControlPlaneClient.newJobId()
+                    val corr = java.util.UUID.randomUUID().toString()
                     scope.launch {
                         // The chat root: the connector enforces containment + policy.
                         val ok = client.submitPrompt(server.id, "/tmp/friday-acp-test", text, corr)

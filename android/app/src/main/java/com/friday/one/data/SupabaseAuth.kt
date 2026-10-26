@@ -6,8 +6,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.friday.one.BuildConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
@@ -69,16 +71,70 @@ class SupabaseAuth(private val context: Context) {
     suspend fun current(): CloudSession? {
         val p = context.cloudStore.data.first()
         val access = p[Keys.access] ?: return null
-        return CloudSession(access, p[Keys.refresh] ?: "", p[Keys.userId] ?: "", p[Keys.email] ?: "")
+        val email = p[Keys.email] ?: ""
+        // Supabase access tokens live ~1h. If expired, refresh via the
+        // stored refresh token BEFORE returning; a dead refresh clears the
+        // session so the UI shows login instead of 401 loops.
+        if (isExpired(access)) {
+            val refreshed = runCatching {
+                refreshWith(p[Keys.refresh] ?: return null.also { clear() })
+            }.getOrNull()
+            return refreshed ?: return null.also { clear() }
+        }
+        return CloudSession(access, p[Keys.refresh] ?: "", p[Keys.userId] ?: "", email)
     }
+
+    private suspend fun refreshWith(refreshToken: String): CloudSession = withContext(Dispatchers.IO) {
+        val body = mapOf("refresh_token" to refreshToken).jsonBody()
+        val req = Request.Builder()
+            .url("${BuildConfig.SUPABASE_URL}/auth/v1/token?grant_type=refresh_token")
+            .header("apikey", BuildConfig.SUPABASE_PUBLISHABLE_KEY)
+            .post(body)
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string() ?: ""
+            val obj = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull()
+            if (!resp.isSuccessful) {
+                android.util.Log.e(Keys.TAG, "refresh -> ${resp.code}")
+                error("refresh failed (${resp.code})")
+            }
+            val access = obj?.get("access_token")?.toString()?.trim('"') ?: error("no token on refresh")
+            val s = CloudSession(
+                access,
+                obj["refresh_token"]?.toString()?.trim('"') ?: refreshToken,
+                (obj["user"] as? JsonObject)?.get("id")?.toString()?.trim('"') ?: "",
+                email = (obj["user"] as? JsonObject)?.get("email")?.toString()?.trim('"')
+                    ?: runCatching { currentEmailBlocking() }.getOrDefault(""),
+            )
+            save(s)
+            s
+        }
+    }
+
+    private suspend fun currentEmailBlocking(): String =
+        context.cloudStore.data.first()[Keys.email] ?: ""
+
+    /** exp check WITHOUT signature verification — the server verifies every
+     * token; this is only a local refresh trigger (same rule as JWTs). */
+    private fun isExpired(jwt: String, skewSeconds: Long = 60): Boolean = runCatching {
+        val payload = String(
+            java.util.Base64.getUrlDecoder().decode(jwt.split(".")[1]),
+            Charsets.UTF_8,
+        )
+        val exp = Regex("\"exp\"\\s*:\\s*(\\d+)").find(payload)?.groupValues?.get(1)?.toLong()
+            ?: return true
+        exp - System.currentTimeMillis() / 1000 <= skewSeconds
+    }.getOrDefault(true)
 
     suspend fun clear() = context.cloudStore.edit { it.clear() }
 
     // ---- email + password --------------------------------------------------
+    // All network I/O runs on Dispatchers.IO — OkHttp's execute() is blocking,
+    // and callers invoke these from the composition scope (main thread).
     suspend fun login(email: String, password: String): CloudSession =
-        authCall("token?grant_type=password", email, password).also { save(it) }
+        withContext(Dispatchers.IO) { authCall("token?grant_type=password", email, password).also { save(it) } }
 
-    suspend fun register(email: String, password: String): SignupOutcome {
+    suspend fun register(email: String, password: String): SignupOutcome = withContext(Dispatchers.IO) {
         val body = mapOf("email" to email, "password" to password).jsonBody()
         val req = Request.Builder()
             .url("${BuildConfig.SUPABASE_URL}/auth/v1/signup")
@@ -93,12 +149,12 @@ class SupabaseAuth(private val context: Context) {
                 error(msg)
             }
             val access = obj?.get("access_token")?.toString()?.trim('"')
-            return if (access != null) {
+            if (access == null) {
+                SignupOutcome.NeedsEmailConfirmation
+            } else {
                 val s = sessionFrom(obj, access, email)
                 save(s)
                 SignupOutcome.SignedIn(s)
-            } else {
-                SignupOutcome.NeedsEmailConfirmation
             }
         }
     }
@@ -121,7 +177,7 @@ class SupabaseAuth(private val context: Context) {
     }
 
     /** Exchange the deep-link code for a session (PKCE verifier in memory). */
-    suspend fun completeGoogle(code: String): CloudSession {
+    suspend fun completeGoogle(code: String): CloudSession = withContext(Dispatchers.IO) {
         val body = mapOf("auth_code" to code, "code_verifier" to pkceVerifier).jsonBody()
         val req = Request.Builder()
             .url("${BuildConfig.SUPABASE_URL}/auth/v1/token?grant_type=pkce")
@@ -138,7 +194,7 @@ class SupabaseAuth(private val context: Context) {
                 ?: error("no session in google callback")
             val s = sessionFrom(obj, access, obj?.get("email")?.toString()?.trim('"') ?: "")
             save(s)
-            return s
+            s
         }
     }
 
@@ -154,11 +210,17 @@ class SupabaseAuth(private val context: Context) {
             val text = resp.body?.string() ?: ""
             val obj = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull()
             if (!resp.isSuccessful) {
-                val msg = obj?.get("msg")?.toString()?.trim('"') ?: "auth failed (${resp.code})"
+                val msg = obj?.get("msg")?.toString()?.trim('"')
+                    ?: obj?.get("error_description")?.toString()?.trim('"')
+                    ?: "auth failed (${resp.code})"
+                android.util.Log.e(TAG, "auth $path -> ${resp.code}: $text.take(200)")
                 error(msg)
             }
             val access = obj?.get("access_token")?.toString()?.trim('"')
-                ?: error("no session (confirm your email?)")
+                ?: run {
+                    android.util.Log.e(TAG, "auth 200 but no token: ${text.take(200)}")
+                    error("no session (confirm your email?)")
+                }
             return sessionFrom(obj, access, email).also { save(it) }
         }
     }
@@ -179,10 +241,11 @@ class SupabaseAuth(private val context: Context) {
             "\"$k\":\"${v.replace("\\", "\\\\").replace("\"", "\\\"")}\""
         }.toRequestBody("application/json".toMediaType())
 
-    private object Keys {
+    private companion object Keys {
         val access = stringPreferencesKey("cloud_access")
         val refresh = stringPreferencesKey("cloud_refresh")
         val userId = stringPreferencesKey("cloud_user_id")
         val email = stringPreferencesKey("cloud_email")
+        const val TAG = "FRIDAY-AUTH"
     }
 }
