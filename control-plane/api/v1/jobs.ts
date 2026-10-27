@@ -12,7 +12,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   if (!user) return fail(res, 401, "unauthorized");
   const serverId = typeof req.query?.server_id === "string" ? req.query.server_id : undefined;
   try {
-    json(res, 200, { jobs: await listJobs(user.id, serverId) });
+    const jobs = await listJobs(user.id, serverId);
+    if (jobs === null) return fail(res, 404, "not_found");
+    json(res, 200, { jobs });
   } catch {
     fail(res, 500, "list_failed");
   }
