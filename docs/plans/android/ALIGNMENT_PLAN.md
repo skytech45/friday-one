@@ -1,6 +1,26 @@
 # FRIDAY One Android — Alignment Plan
 
-**Status:** Proposed · **Written:** 2026-10-27 · **Baseline:** app v0.9.0 (versionCode 10), `master` @ `61a8896`
+**Status:** Phases 0–1 done (2026-10-27, branch `android/alignment-phase-0-1`); Phase 2 next · **Written:** 2026-10-27 · **Baseline:** app v0.9.0 (versionCode 10), `master` @ `61a8896`
+
+### Progress log
+
+- **Phase 0 — done.** Gradle wrapper 8.14 (`-all`, `distributionSha256Sum`
+  pinned) committed; CI runs `./gradlew` and validates the wrapper jar.
+  `ScreensSmokeTest` (Robolectric, runs inside `:app:testDebugUnitTest`, no
+  emulator) renders every top-level screen.
+- **Phase 1 — done.** `CloudScreen.kt` (1,384 lines) is gone; largest app
+  file is 270 lines. Screens moved by script with byte-identity checks; the
+  pairing and chat screens were split into stateless sub-composables
+  (`PairingInstructionsCard`, `PairingConnectCard`, `ChatMessageList`,
+  `PermissionRequestCard`, `JobProgressBar`, `PromptInputRow`) with their
+  state left in the parent. Smoke test grew to 8 cases, including callback
+  checks for cards the full screens only show mid-flow.
+- **Deviations from §3:** the two `SectionLabel`s were *not* merged — they
+  render differently, and the public one had no callers, so it was deleted
+  with the other dead `Dashboard.kt` code while `SecurityView` keeps its own.
+  `DashboardView` keeps its name inside `HomeScreen.kt` (rename in Phase 4).
+- **Not yet done from §3 verification:** the manual emulator walk-through
+  and before/after screenshots.
 
 Brings the Android app in line with [PRD.md](../../PRD.md),
 [ANDROID_SYSTEM_DESIGN.md](../../ANDROID_SYSTEM_DESIGN.md) and

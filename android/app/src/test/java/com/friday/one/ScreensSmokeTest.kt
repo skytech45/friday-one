@@ -33,7 +33,7 @@ import org.robolectric.annotation.Config
  * Smoke test for every top-level screen (alignment plan, Phase 0/1).
  *
  * Renders each screen with fixed inputs and checks its key labels. It guards
- * the CloudScreen.kt split: the moves must not change what is rendered.
+ * the screen refactors (alignment plan): moves must not change what is rendered.
  * No backend is contacted except the chat's gateway socket, which points at
  * a closed local port and simply fails.
  */

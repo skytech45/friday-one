@@ -50,7 +50,7 @@ Follow the terminal prompt to enter your pairing token from the mobile app. A te
 
 ```
 ├── android/            # Native Android application (Jetpack Compose, Kotlin)
-│   └── app/            # Main application module (UI theme, CloudScreen, GatewayClient)
+│   └── app/            # Main module: app/ shell, feature/* screens, core/designsystem, data/ clients
 ├── connector/          # Cloud server daemon & CLI (`fridayone`, ACP agent adapters)
 ├── control-plane/      # Vercel serverless API (Pairing state machine, auth, Supabase RPC)
 ├── gateway/            # Realtime WSS hub (Port 8790, ReplayGuard, streaming deltas)
