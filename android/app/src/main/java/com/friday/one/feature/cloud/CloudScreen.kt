@@ -35,9 +35,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.friday.one.core.designsystem.Dash
+import com.friday.one.core.designsystem.components.MetricCard
+import com.friday.one.core.designsystem.components.ServerCard
+import com.friday.one.core.designsystem.components.cloudFieldColors
 import com.friday.one.data.*
 import com.friday.one.feature.security.SecurityView
-import com.friday.one.ui.components.Dash
 import com.friday.one.ui.theme.*
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -1008,72 +1011,6 @@ internal fun DashboardView(
     }
 }
 
-@Composable
-private fun MetricCard(title: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = Dash.Card),
-        shape = RoundedCornerShape(14.dp),
-        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Dash.CardEdge)),
-        modifier = modifier,
-    ) {
-        Column(Modifier.padding(12.dp)) {
-            Text(title, color = Dash.Dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
-            Spacer(Modifier.height(4.dp))
-            Text(value, color = color, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-@Composable
-private fun ServerCard(server: CloudServer, onOpenChat: () -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = Dash.Card),
-        shape = RoundedCornerShape(16.dp),
-        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Dash.CardEdge)),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Status Dot
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(if (server.online) FridayStatusOk else Dash.Dim),
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(server.name, color = Dash.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (server.online) "Online · Active" else "State: ${server.enrollmentState}",
-                        color = if (server.online) FridayStatusOk else Dash.Dim,
-                        fontSize = 12.sp,
-                    )
-                }
-                if (server.agents.isNotEmpty()) {
-                    Text(
-                        server.agents.joinToString(", ") { it.adapter } +
-                            " · ${server.projects.size} root(s)",
-                        color = Dash.Dim, fontSize = 10.sp,
-                    )
-                }
-            }
-            Button(
-                onClick = onOpenChat,
-                enabled = server.enrollmentState == "active",
-                colors = ButtonDefaults.buttonColors(containerColor = if (server.online) FridayBrandBlue else Dash.CardEdge),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-            ) {
-                Text("Open Chat", fontSize = 13.sp, color = if (server.online) Color.White else Dash.Dim)
-            }
-        }
-    }
-}
-
 // ============================================================================
 // 5. LIVE AI AGENT CHAT VIEW (with streaming & permission approval cards)
 // ============================================================================
@@ -1369,16 +1306,3 @@ internal fun ChatView(
         }
     }
 }
-
-@Composable
-private fun cloudFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedTextColor = Dash.Text,
-    unfocusedTextColor = Dash.Text,
-    focusedBorderColor = FridayBrandBlue,
-    unfocusedBorderColor = Dash.CardEdge,
-    cursorColor = FridayBrandBlue,
-    focusedLabelColor = FridayBrandBlue,
-    unfocusedLabelColor = Dash.Dim,
-    focusedContainerColor = Dash.Card,
-    unfocusedContainerColor = Dash.Card,
-)

@@ -17,11 +17,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.friday.one.core.designsystem.Dash
 import com.friday.one.data.AuditEvent
 import com.friday.one.data.CloudServer
 import com.friday.one.data.Job
 import com.friday.one.data.Policy
-import com.friday.one.ui.components.Dash
 import kotlinx.coroutines.launch
 
 private val ACTIONS = listOf(
