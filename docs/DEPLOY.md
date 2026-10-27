@@ -178,3 +178,29 @@ The Cloudflare Tunnel deployment does **not** modify, disable, or replace the
 Tailscale configuration. Both coexist: Tailscale for machine-to-machine access,
 Cloudflare Tunnel for the mobile app's HTTPS endpoint.
 
+
+## Releases (GitHub Actions)
+
+Releases are built and published by `.github/workflows/release.yml`, never
+by hand. It runs the full CI first, then publishes:
+
+- `install.sh`, with its connector version pinned to the release tag (the
+  app's install command downloads it from `releases/latest/download/install.sh`);
+- `friday-connector-<tag>-linux-{x64,arm64}.js` + `.sha256` (verified by `install.sh`);
+- `FRIDAY-One-<tag>-release.apk` + `.sha256`, signed with the real release
+  key. The job refuses a debug-signed APK.
+
+### One-time: signing secrets (run on the host that holds the keystore)
+
+```bash
+gh secret set ANDROID_KEYSTORE_BASE64 -R skytech45/friday-one < <(base64 -w0 ~/.android-keys/friday-release.jks)
+gh secret set ANDROID_KEYSTORE_PASSWORD -R skytech45/friday-one   # paste storePassword from key.properties
+gh secret set ANDROID_KEY_ALIAS -R skytech45/friday-one           # friday
+gh secret set ANDROID_KEY_PASSWORD -R skytech45/friday-one        # paste keyPassword from key.properties
+```
+
+### Each release
+
+1. Bump `versionCode`/`versionName` in `android/app/build.gradle.kts` on `master` if the app changed.
+2. Tag the `master` commit and push the tag: `git tag -a vX.Y.Z -m "FRIDAY One vX.Y.Z" && git push origin vX.Y.Z`.
+3. Run `gh workflow run release -R skytech45/friday-one -f tag=vX.Y.Z` and watch the run.

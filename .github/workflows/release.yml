@@ -1,0 +1,175 @@
+# FRIDAY One release: runs the full CI, then builds and publishes the
+# versioned assets that docs and the app's install command rely on:
+#   install.sh (connector version pinned to the tag)
+#   friday-connector-<tag>-linux-{x64,arm64}.js + .sha256 (what install.sh verifies)
+#   FRIDAY-One-<tag>-release.apk + .sha256 (signed with the REAL release key)
+#
+# Trigger: push a tag vX.Y.Z on master, then run this workflow manually with
+# that tag (`gh workflow run release -f tag=vX.Y.Z`). Publishing is a
+# deliberate act, never a side effect of pushing a tag.
+# Required repository secrets (APK signing):
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# Without them the APK job fails; a debug-signed APK is never published.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release (e.g. v0.9.0)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.inputs.tag }}
+
+jobs:
+  ci:
+    name: CI (full suite)
+    uses: ./.github/workflows/ci.yml
+
+  connector:
+    name: Connector bundle + installer
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+        working-directory: connector
+      - name: Build bundle
+        working-directory: connector
+        run: bash build-release.sh "$TAG"
+      - name: Name per architecture + checksums
+        run: |
+          set -euo pipefail
+          mkdir -p dist-release
+          for arch in x64 arm64; do
+            name="friday-connector-${TAG}-linux-${arch}.js"
+            cp "connector/release/friday-connector-${TAG}.js" "dist-release/${name}"
+            (cd dist-release && sha256sum "${name}" > "${name}.sha256")
+          done
+      - name: Installer pinned to this release
+        run: |
+          set -euo pipefail
+          sed -E "s/^VERSION=\"\\\$\{FRIDAY_CONNECTOR_VERSION:-v[0-9][^}]*\}\"/VERSION=\"\${FRIDAY_CONNECTOR_VERSION:-${TAG}}\"/" \
+            connector/install.sh > dist-release/install.sh
+          grep -q "FRIDAY_CONNECTOR_VERSION:-${TAG}}" dist-release/install.sh || { echo "version pin not updated" >&2; exit 1; }
+          bash -n dist-release/install.sh
+          (cd dist-release && sha256sum install.sh > install.sh.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: connector
+          path: dist-release/
+          if-no-files-found: error
+
+  apk:
+    name: Signed release APK
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install release keystore (outside the workspace)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for v in KEYSTORE_B64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            [ -n "${!v}" ] || { echo "::error::missing signing secret for $v (see docs/DEPLOYMENT.md, release section)"; exit 1; }
+          done
+          umask 077
+          mkdir -p ~/.android-keys
+          printf '%s' "$KEYSTORE_B64" | base64 -d > ~/.android-keys/friday-release.jks
+          {
+            echo "storeFile=$HOME/.android-keys/friday-release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > ~/.android-keys/key.properties
+      - name: Build release APK
+        run: gradle -p android :app:assembleRelease --console=plain
+      - name: Refuse anything but the release certificate
+        run: |
+          set -euo pipefail
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          "$apksigner" verify --print-certs "$apk" | tee certs.txt
+          if grep -qi "CN=Android Debug" certs.txt; then
+            echo "::error::APK is debug-signed; refusing to publish"; exit 1
+          fi
+          mkdir -p dist-apk
+          cp "$apk" "dist-apk/FRIDAY-One-${TAG}-release.apk"
+          (cd dist-apk && sha256sum "FRIDAY-One-${TAG}-release.apk" > "FRIDAY-One-${TAG}-release.apk.sha256")
+      - name: Remove keystore
+        if: always()
+        run: rm -rf ~/.android-keys
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: dist-apk/
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [connector, apk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -la assets
+          {
+            echo "## Install or upgrade the connector"
+            echo
+            echo '```bash'
+            echo "curl -fsSL https://github.com/${REPO}/releases/download/${TAG}/install.sh | sudo bash"
+            echo '```'
+            echo
+            echo "The installer is pinned to **${TAG}** and verifies the connector's SHA-256 before installing."
+            echo
+            echo "## Android"
+            echo
+            echo "\`FRIDAY-One-${TAG}-release.apk\`, signed with the FRIDAY One release key (upgrades over earlier releases)."
+            echo
+            echo "## Checksums"
+            echo
+            echo '```'
+            cat assets/*.sha256
+            echo '```'
+          } > notes.md
+          gh release create "$TAG" assets/* \
+            --repo "$REPO" \
+            --verify-tag \
+            --title "FRIDAY One ${TAG}" \
+            --notes-file notes.md \
+            --generate-notes \
+            --latest
