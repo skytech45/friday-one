@@ -77,6 +77,12 @@ Follow the terminal prompt to enter your pairing token from the mobile app. A te
 - [UI/UX Design Guide](docs/UI_UX_GUIDE.md)
 - [Android Alignment Plan](docs/plans/android/ALIGNMENT_PLAN.md)
 
+### Firebase migration
+- [System Architecture](docs/SYSTEM_ARCHITECTURE.md) · [Migration Plan](docs/FIREBASE_MIGRATION_PLAN.md) · [Status](docs/FIREBASE_MIGRATION_STATUS.md)
+- [Data Model](docs/FIREBASE_DATA_MODEL.md) · [Security Rules](docs/FIRESTORE_SECURITY_RULES.md) · [Firebase Setup](docs/FIREBASE_SETUP.md) · [Environments](docs/ENVIRONMENT_CONFIGURATION.md)
+- [Data Migration](docs/DATA_MIGRATION.md) · [Deployment](docs/DEPLOYMENT.md) · [Rollback](docs/ROLLBACK_PLAN.md)
+- [Testing](docs/TESTING.md) · [Cost & Quotas](docs/COST_AND_QUOTAS.md) · [Production Readiness](docs/PRODUCTION_READINESS_CHECKLIST.md)
+
 ---
 
 ## 🔒 Security & Verification
