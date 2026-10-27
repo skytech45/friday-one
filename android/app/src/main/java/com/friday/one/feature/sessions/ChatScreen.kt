@@ -27,8 +27,12 @@ internal fun ChatView(
     server: CloudServer,
     gatewayUrl: String,
     onBack: () -> Unit,
+    /** Fresh token per (re)connect; Cloud Run drops sockets at 60 min. */
+    tokenProvider: suspend () -> String? = { session.accessToken },
 ) {
-    val client = remember(gatewayUrl) { GatewayClient(gatewayUrl, { session.accessToken }) }
+    val currentTokenProvider by rememberUpdatedState(tokenProvider)
+    val client = remember(gatewayUrl) { GatewayClient(gatewayUrl, { currentTokenProvider() }) }
+    var reconnecting by remember { mutableStateOf(false) }
     var messages by remember { mutableStateOf(listOf<Pair<String, Boolean>>()) } // text to isUser
     var input by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Connecting to gateway...") }
@@ -50,7 +54,19 @@ internal fun ChatView(
     LaunchedEffect(server.id) {
         client.events().collect { ev ->
             when (ev) {
-                is GatewayEvent.Connected -> status = "Connected to ${server.name}"
+                is GatewayEvent.Connected -> {
+                    status = "Connected to ${server.name}"
+                    if (reconnecting && pendingJob != null) {
+                        // Nothing is replayed across a reconnect: say so.
+                        messages = messages + Pair("⚠ Reconnected — output sent while offline may be missing", false)
+                    }
+                    reconnecting = false
+                }
+                is GatewayEvent.Reconnecting -> {
+                    reconnecting = true
+                    status = "Connection lost — reconnecting in ${(ev.delayMs + 999) / 1000}s"
+                }
+                GatewayEvent.AuthFailed -> status = "Session expired — sign in again"
                 GatewayEvent.Disconnected -> status = "Gateway Disconnected"
                 is GatewayEvent.JobAccepted -> pendingJob = ev.jobId
                 is GatewayEvent.JobStarted -> {}

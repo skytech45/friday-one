@@ -263,6 +263,8 @@ credentials, policies). Detail: ROLLBACK_PLAN.md.
 | F-M15 | A repeated `command.submit` with the same idempotency key resets the job to `queued` and **dispatches it again**, so the prompt executes twice. | Medium | Deterministic job ID + `create()`; a repeat gets `command.rejected{duplicate_request}`; test G-5. |
 | F-M16 | A connector's live socket survives revocation; only its next reconnect is refused. | Medium | Firestore listener on the credential + server closes the socket with 4403 (about a second); expiry by timer; test G-3. |
 | F-M17 | The envelope schema requires UUIDs for `server_id`/`agent_id`. Firestore auto-IDs would break every message. | (Design constraint) | Servers use `randomUUID()`; agents carry a stable `agentId` (v8 UUID, or the migrated one). |
+| F-M18 | The Android client took job IDs from `correlation_id` (the dispatch message ID), so **Cancel in the app never reached a real job**; the live "cancel verified" evidence came from a test script that read `payload.job_id`. | Medium (broken feature) | Job ID read from `payload.job_id`; test `GatewayClientTest`. |
+| F-M19 | The Android client never reconnected (despite its comment), and handed the gateway the token captured when the chat opened. On Cloud Run's 60-minute socket limit, chat would silently die, and a naive reconnect would fail on an expired token. | Medium (blocks D3) | Reconnect loop with jittered backoff, fresh token per connect, no replay; tests in `GatewayClientTest`. |
 
 ## 9. Risks
 

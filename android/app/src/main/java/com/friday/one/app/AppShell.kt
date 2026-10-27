@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
 internal fun AppDashboardShell(
     session: CloudSession,
     onSignedOut: () -> Unit,
+    /** Fresh bearer token on demand (gateway reconnects outlive a session copy). */
+    tokenProvider: suspend () -> String? = { session.accessToken },
 ) {
     val scope = rememberCoroutineScope()
     var servers by remember { mutableStateOf<List<CloudServer>?>(null) }
@@ -53,6 +55,7 @@ internal fun AppDashboardShell(
                     session = session,
                     server = activeChatServer!!,
                     gatewayUrl = gw,
+                    tokenProvider = tokenProvider,
                     onBack = {
                         activeChatServer = null
                         scope.launch { reloadServers() }

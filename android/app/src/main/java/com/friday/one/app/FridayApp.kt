@@ -85,11 +85,14 @@ private fun FirebaseRoot(auth: AuthRepository) {
                 scope.launch { auth.signOut() }
                 session = null
             },
+            tokenProvider = { auth.current()?.accessToken },
         )
     }
 }
 
-private const val TOKEN_REFRESH_INTERVAL_MS = 10 * 60 * 1000L
+// Firebase refreshes an ID token once it is within 5 minutes of expiry, so
+// polling every 4 minutes means the session copy never holds an expired token.
+private const val TOKEN_REFRESH_INTERVAL_MS = 4 * 60 * 1000L
 
 /** Legacy Supabase backend, kept unchanged until the Firebase cutover is verified. */
 @Composable
@@ -135,6 +138,8 @@ private fun LegacyRoot(auth: SupabaseAuth) {
                 scope.launch { auth.clear() }
                 session = null
             },
+            // SupabaseAuth.current() refreshes an expiring token first.
+            tokenProvider = { auth.current()?.accessToken },
         )
     }
 }

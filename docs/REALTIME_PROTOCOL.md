@@ -119,3 +119,20 @@ cannot execute twice.
 - Agent output is untrusted input to every renderer (terminal/HTML escaping,
   secret redaction).
 - Backpressure and size caps on every stream (`chat.delta`, `terminal.output`).
+
+## App reconnect (Android `GatewayClient`)
+
+Cloud Run ends every WebSocket at its request timeout (≤ 60 min), so app
+reconnects are routine:
+
+- Retry with exponential backoff and full jitter: attempt *n* waits a random
+  250 ms – min(30 s, 1 s·2^(n−1)); the counter resets after a successful
+  `auth.resume.ok`.
+- Every connect sends `auth.app` with a **freshly fetched** ID token.
+- Two consecutive refusals (close 4401/4403 before `auth.resume.ok`) stop
+  the loop; the UI asks the user to sign in again.
+- Nothing is queued or replayed: a send while disconnected fails, so a
+  dropped socket can never execute a prompt twice. Events sent during the
+  gap are not recovered; the UI says so if a job was running.
+- `sequence` keeps increasing across sockets of one client; the gateway sets
+  a new replay baseline on each `auth.app`.
