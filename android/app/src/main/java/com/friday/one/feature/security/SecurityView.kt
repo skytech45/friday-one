@@ -1,4 +1,4 @@
-package com.friday.one.feature.cloud
+package com.friday.one.feature.security
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
