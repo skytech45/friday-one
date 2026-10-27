@@ -64,7 +64,7 @@ Detail and evidence: [FIREBASE_MIGRATION_STATUS.md](FIREBASE_MIGRATION_STATUS.md
 | Priority | Issue |
 |---|---|
 | P1 | F-M1 plaintext pickup → connector 0.2.0 local credential generation |
-| P2 | Connector policy sync every 60 s dominates Firestore reads (COST_AND_QUOTAS.md §2) |
+| P2 | ~~Connector policy sync every 60 s dominates Firestore reads~~ fixed: 15-min rotation check, pre-execution fetch kept (COST_AND_QUOTAS.md §2); live connectors need the upgrade; integration test runs on CI only (Linux) |
 | P2 | R8 in AGP 8.7.3 cannot parse Kotlin 2.4 metadata (warning) → upgrade AGP |
 | P2 | `friday-gateway.service` still configured for Supabase (unused after cutover) |
 | P3 | Android: output sent while the app is reconnecting is not recovered (UI warns) |

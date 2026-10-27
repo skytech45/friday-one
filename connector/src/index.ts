@@ -22,6 +22,7 @@ import {
   type AgentSpec,
 } from "./agents.js";
 import { GatewayConnection } from "./gateway.js";
+import { rotationCheckIntervalMs, startRotationChecks } from "./rotation.js";
 import { createHash, randomBytes } from "node:crypto";
 
 const CONNECTOR_VERSION = "0.1.0";
@@ -296,10 +297,12 @@ async function main(): Promise<void> {
       console.warn("[config] FRIDAY_GATEWAY_URL not set: running disconnected");
     }
 
-    // Policy is REMOTE (per-dispatch, fail closed); the same sync response
-    // carries the rotation-due signal — checked on boot and every 60 s.
-    void maybeRotate(cfg);
-    setInterval(() => { void maybeRotate(cfg); }, 60_000);
+    // Policy is REMOTE and fetched before EVERY execution (handleDispatch,
+    // fail closed). The same sync response carries the rotation-due signal,
+    // which is checked on boot and then on a slower background cadence.
+    const rotationEvery = rotationCheckIntervalMs();
+    console.log(`rotation check every ${rotationEvery / 1000}s`);
+    startRotationChecks(() => maybeRotate(cfg), rotationEvery);
     return;
   }
 
