@@ -22,6 +22,7 @@ import {
   touchLastSeen,
   upsertQueuedJob,
   setJobState,
+  cancelJobIfInFlight,
   findQueuedJob,
   findAgent,
   upsertAgents,
@@ -306,7 +307,10 @@ async function handleAppMessage(conn: AppConn, env: Envelope): Promise<void> {
       if (!job) return;
       const connector = connectorsByServer.get(job.server_id);
       if (!connector || connector.ownerId !== conn.userId) return;
-      await setJobState(jobId, "cancelled");
+      if (!(await cancelJobIfInFlight(jobId))) {
+        log(`cancel ignored: job ${jobId.slice(0, 8)} already terminal`);
+        return;
+      }
       sendTo(connector, gatewayEnvelope({
         correlationId: env.message_id, serverId: job.server_id, connectorId: connector.connectorId,
         eventType: "command.cancel",

@@ -107,6 +107,23 @@ export async function setJobState(jobId: string, state: string, resultSummary?: 
   });
 }
 
+/** Job states a cancel may still interrupt; everything else is terminal. */
+export const CANCELLABLE_JOB_STATES = ["queued", "dispatched", "accepted", "started"] as const;
+
+/**
+ * Atomically cancel a job that is still in flight. The state filter rides on
+ * the UPDATE itself, so a job that finishes concurrently is never overwritten.
+ * Returns false when the job is already terminal (or unknown).
+ */
+export async function cancelJobIfInFlight(jobId: string): Promise<boolean> {
+  const rows = await rest<CommandJobRow>("PATCH", "command_jobs", {
+    body: { state: "cancelled", updated_at: new Date().toISOString() },
+    query: { id: `eq.${jobId}`, state: `in.(${CANCELLABLE_JOB_STATES.join(",")})` },
+    prefer: "return=representation",
+  });
+  return rows.length > 0;
+}
+
 export async function findQueuedJob(jobId: string): Promise<CommandJobRow | null> {
   const rows = await rest<CommandJobRow>("GET", "command_jobs", { query: { id: `eq.${jobId}` } });
   return rows[0] ?? null;
