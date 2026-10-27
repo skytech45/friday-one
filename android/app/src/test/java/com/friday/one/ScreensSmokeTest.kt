@@ -1,5 +1,6 @@
 package com.friday.one
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -13,11 +14,13 @@ import com.friday.one.data.CloudServer
 import com.friday.one.data.CloudSession
 import com.friday.one.data.SupabaseAuth
 import com.friday.one.feature.auth.AuthScreen
-import com.friday.one.feature.cloud.ChatView
 import com.friday.one.feature.home.DashboardView
 import com.friday.one.feature.pairing.PairingConnectCard
 import com.friday.one.feature.pairing.PairingInstructionsCard
 import com.friday.one.feature.pairing.ServerPairingScreen
+import com.friday.one.feature.sessions.ChatView
+import com.friday.one.feature.sessions.JobProgressBar
+import com.friday.one.feature.sessions.PermissionRequestCard
 import com.friday.one.ui.theme.FridayOneTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -163,6 +166,28 @@ class ScreensSmokeTest {
         compose.onNodeWithText("Scan Terminal QR").performClick()
         assertEquals("submit should call onPairWithKey once", 1, pairCalls)
         assertEquals("QR tab should request mode 0", 0, mode)
+    }
+
+    @Test
+    fun chatPermissionCardAndCancelBarWireCallbacks() {
+        val calls = mutableListOf<String>()
+        compose.setContent {
+            FridayOneTheme {
+                Column {
+                    PermissionRequestCard(
+                        operation = "file.write /srv/app/x",
+                        onDeny = { calls += "deny" },
+                        onApprove = { calls += "approve" },
+                    )
+                    JobProgressBar(onCancel = { calls += "cancel" })
+                }
+            }
+        }
+        compose.onNodeWithText("The AI agent wants to execute: file.write /srv/app/x").assertExists()
+        compose.onNodeWithText("Deny").performClick()
+        compose.onNodeWithText("Approve").performClick()
+        compose.onNodeWithText("Cancel").performClick()
+        assertEquals(listOf("deny", "approve", "cancel"), calls)
     }
 
     @Test
