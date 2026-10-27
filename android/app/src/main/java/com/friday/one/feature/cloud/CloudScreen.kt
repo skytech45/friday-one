@@ -109,7 +109,7 @@ fun CloudScreen(auth: SupabaseAuth) {
 // 1. AUTHENTICATION SCREEN (Sign In & Register Tabs)
 // ============================================================================
 @Composable
-private fun AuthScreen(
+internal fun AuthScreen(
     auth: SupabaseAuth,
     onSignedIn: (CloudSession) -> Unit,
     googleError: String?,
@@ -444,7 +444,7 @@ private fun AppDashboardShell(
 // 3. DEDICATED SERVER PAIRING SCREEN (QR Scanner + Key Option)
 // ============================================================================
 @Composable
-private fun ServerPairingScreen(
+internal fun ServerPairingScreen(
     accessToken: String,
     existingCount: Int,
     onPairingComplete: () -> Unit,
@@ -868,7 +868,7 @@ private fun ServerPairingScreen(
 // 4. MAIN SERVER DASHBOARD VIEW
 // ============================================================================
 @Composable
-private fun DashboardView(
+internal fun DashboardView(
     session: CloudSession,
     servers: List<CloudServer>?,
     loadError: String?,
@@ -1078,7 +1078,7 @@ private fun ServerCard(server: CloudServer, onOpenChat: () -> Unit) {
 // 5. LIVE AI AGENT CHAT VIEW (with streaming & permission approval cards)
 // ============================================================================
 @Composable
-private fun ChatView(
+internal fun ChatView(
     session: CloudSession,
     server: CloudServer,
     gatewayUrl: String,

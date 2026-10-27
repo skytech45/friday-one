@@ -85,6 +85,10 @@ android {
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
     }
+    testOptions {
+        // Robolectric-backed Compose smoke tests need merged resources.
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -109,6 +113,11 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     testImplementation("junit:junit:4.13.2")
+    // Compose screen smoke tests on the JVM (no emulator): Robolectric host.
+    testImplementation(composeBom)
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("org.robolectric:robolectric:4.13")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
