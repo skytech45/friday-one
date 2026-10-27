@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "FRIDAY One realtime gateway \u2014 authenticated WSS hub between Android clients and connectors. Single instance; durable state lives in Supabase.",
+  "description": "FRIDAY One realtime gateway — authenticated WSS hub between Android clients and connectors. Single instance; durable state lives in Supabase.",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node agents-test.mjs && node capabilities-test.mjs"
+    "test": "npm run build && node agents-test.mjs && node capabilities-test.mjs && node permission-decide-test.mjs"
   },
   "dependencies": {
     "jose": "^5.9.0",

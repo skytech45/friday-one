@@ -171,11 +171,17 @@ export async function listAudit(ownerId: string): Promise<Array<{
   });
 }
 
+/**
+ * Jobs for the owner's servers, optionally narrowed to one server. Returns
+ * null when `serverId` is not one of the owner's servers (F-M9: the service
+ * key bypasses RLS, so this check is the only thing stopping a cross-user read).
+ */
 export async function listJobs(ownerId: string, serverId?: string): Promise<Array<{
   id: string; server_id: string; operation: string; state: string; updated_at: string;
-}>> {
+}> | null> {
   const servers = await rest<{ id: string }>("GET", "servers", { query: { owner_id: `eq.${ownerId}`, select: "id" } });
   const ids = servers.map((s) => s.id);
+  if (serverId !== undefined && !ids.includes(serverId)) return null;
   if (ids.length === 0) return [];
   const filter = serverId ? `eq.${serverId}` : `in.(${ids.join(",")})`;
   return rest("GET", "command_jobs", {

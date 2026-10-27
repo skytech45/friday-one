@@ -25,7 +25,7 @@ jobs:
       - run: npx tsc --noEmit
         working-directory: ${{ matrix.component }}
       - name: unit tests
-        if: matrix.component == 'gateway' || matrix.component == 'connector'
+        if: matrix.component == 'gateway' || matrix.component == 'connector' || matrix.component == 'control-plane'
         run: npm test
         working-directory: ${{ matrix.component }}
       - name: connector bundle builds

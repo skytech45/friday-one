@@ -317,12 +317,16 @@ async function handleAppMessage(conn: AppConn, env: Envelope): Promise<void> {
     case "permission.decided": {
       const p = env.payload as { request_id?: string; decision?: string };
       if (typeof p.request_id !== "string" || (p.decision !== "allow" && p.decision !== "deny")) return;
-      // The stored request proves ownership AND the live connector binding.
-      const connector = [...connectorsByServer.values()].find((c) => c.ownerId === conn.userId);
+      // Ownership (F-M14): only requests on this user's own live servers can
+      // be decided; the store also requires pending + unexpired, atomically.
+      // A server whose connector is offline cannot receive the decision anyway.
+      const ownServers = [...connectorsByServer.values()]
+        .filter((c) => c.ownerId === conn.userId)
+        .map((c) => c.serverId);
       const decision = await decidePermissionRequest(
-        p.request_id, conn.userId, p.decision === "allow" ? "approved" : "denied",
+        p.request_id, conn.userId, ownServers, p.decision === "allow" ? "approved" : "denied",
       );
-      if (!decision) return; // not pending / not theirs / replay
+      if (!decision) return; // not pending / not theirs / expired / replay
       // Forward ONLY to the connector it was requested by (durable row knows).
       const target = [...connectorsByServer.values()].find(
         (c) => c.serverId === decision.server_id && c.ownerId === conn.userId,

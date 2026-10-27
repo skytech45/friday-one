@@ -146,12 +146,30 @@ export async function persistPermissionRequest(input) {
     });
     return rows[0];
 }
-/** Records an authenticated decision; idempotent (repeats are no-ops). */
-export async function decidePermissionRequest(requestId, ownerId, decision) {
+/**
+ * Records an authenticated decision; idempotent (repeats are no-ops).
+ *
+ * The update only matches a request that is on one of `ownerServerIds` (the
+ * decider's own servers), still pending, and not yet expired. All three are
+ * filters on the same atomic PATCH. Before F-M14 it matched on id + status
+ * alone, so any signed-in user holding a request id could decide another
+ * user's request, including an expired one.
+ */
+export async function decidePermissionRequest(requestId, ownerId, ownerServerIds, decision) {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const servers = ownerServerIds.filter((id) => uuid.test(id));
+    if (!uuid.test(requestId) || servers.length === 0)
+        return null;
+    const now = new Date().toISOString();
     const rows = await rest("PATCH", "permission_requests", {
-        body: { status: decision, decided_by: ownerId, decided_at: new Date().toISOString() },
+        body: { status: decision, decided_by: ownerId, decided_at: now },
         prefer: "return=representation",
-        query: { id: `eq.${requestId}`, status: "eq.pending" },
+        query: {
+            id: `eq.${requestId}`,
+            status: "eq.pending",
+            server_id: `in.(${servers.join(",")})`,
+            expires_at: `gt.${now}`,
+        },
     });
     return rows[0] ?? null;
 }
