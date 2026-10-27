@@ -195,7 +195,13 @@ cd ../connector && npm run typecheck
 ```
 
 ### Building Android Release APK
+The repo ships a pinned Gradle wrapper (8.14, checksum-verified), so no system
+Gradle is needed. Gradle must run on **JDK 17**: point `JAVA_HOME` at a JDK 17
+install if your default `java` is older. Tell Gradle where the SDK is via
+`android/local.properties` (git-ignored), e.g. `sdk.dir=C:/Users/<you>/AppData/Local/Android/Sdk`.
+
 ```bash
 cd android
+./gradlew :app:testDebugUnitTest   # JVM unit tests
 ./gradlew assembleRelease
 ```

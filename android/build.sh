@@ -26,4 +26,4 @@ if [ -n "$BASE_URL" ]; then
   ARGS+=("-PFRIDAY_BASE_URL=$BASE_URL")
 fi
 
-exec gradle "${ARGS[@]}"
+exec ./gradlew "${ARGS[@]}"

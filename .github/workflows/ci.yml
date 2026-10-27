@@ -42,9 +42,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      - uses: gradle/actions/wrapper-validation@v4
       - uses: gradle/actions/setup-gradle@v4
-      - run: gradle -p android :app:testDebugUnitTest --console=plain
-      - run: gradle -p android :app:assembleRelease --console=plain
+      - run: ./gradlew :app:testDebugUnitTest --console=plain
+        working-directory: android
+      - run: ./gradlew :app:assembleRelease --console=plain
+        working-directory: android
 
   gitleaks:
     name: secret scan
