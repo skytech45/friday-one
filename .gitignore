@@ -44,3 +44,14 @@ audit/audit-verify.mjs
 audit/audit-nnp.mjs
 audit/audit-emptysecret.mjs
 audit/audit-probes.mjs
+
+# ---- Firebase (per-environment client config; see docs/ENVIRONMENT_CONFIGURATION.md) ----
+android/app/google-services.json
+android/app/src/*/google-services.json
+# Service-account keys must never be committed.
+*service-account*.json
+*-firebase-adminsdk-*.json
+firebase/.firebase/
+firebase/**/firebase-debug*.log
+firebase/**/firestore-debug.log
+firebase/**/ui-debug.log
