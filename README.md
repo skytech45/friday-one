@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android_8.0+-green.svg)](android/)
-[![Architecture: Zero--Trust](https://img.shields.io/badge/Security-Zero--Trust_Outbound_WSS-orange.svg)](docs/SYSTEM_DESIGN.md)
+[![Architecture: Zero--Trust](https://img.shields.io/badge/Security-Zero--Trust_Outbound_WSS-orange.svg)](docs/plans/v2/SYSTEM_DESIGN.md)
 
 **FRIDAY One** is a modern, zero-trust cloud server management and autonomous AI agent platform. It connects your Android mobile device directly to your Linux cloud servers and VPS infrastructure, providing real-time AI agent interactions (powered by OpenCode and Hermes ACP runtimes) with granular human-in-the-loop permission approvals.
 
@@ -56,9 +56,10 @@ Follow the terminal prompt to enter your pairing token from the mobile app. A te
 ├── gateway/            # Realtime WSS hub (Port 8790, ReplayGuard, streaming deltas)
 ├── docs/               # System design, API protocols, and setup documentation
 │   ├── SETUP_GUIDE.md  # Detailed step-by-step setup and pairing guide
-│   ├── SYSTEM_DESIGN.md# Architecture and threat model specification
 │   ├── PRD.md          # Product requirements document
-│   └── UI_UX_GUIDE.md  # Design system and user interaction guidelines
+│   ├── ANDROID_SYSTEM_DESIGN.md # Android app architecture and security requirements
+│   ├── UI_UX_GUIDE.md  # Design system and user interaction guidelines
+│   └── plans/          # Platform system design (v2) and the Android alignment plan
 └── scripts/            # Helper scripts and automation utilities
 ```
 
@@ -70,6 +71,11 @@ Follow the terminal prompt to enter your pairing token from the mobile app. A te
 - [Realtime Protocol v1](docs/REALTIME_PROTOCOL.md)
 - [Backend Implementation Details](docs/BACKEND.md)
 - [Google OAuth Setup](docs/GOOGLE_OAUTH_SETUP.md)
+- [Product Requirements](docs/PRD.md)
+- [Platform System Design (v2)](docs/plans/v2/SYSTEM_DESIGN.md)
+- [Android System Design](docs/ANDROID_SYSTEM_DESIGN.md)
+- [UI/UX Design Guide](docs/UI_UX_GUIDE.md)
+- [Android Alignment Plan](docs/plans/android/ALIGNMENT_PLAN.md)
 
 ---
 
