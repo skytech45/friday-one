@@ -22,7 +22,8 @@ unless it says staging or production.
 | Live hotfix (legacy stack) | **merged to `master` locally, not deployed** | `2e27d57` fixes F-M9 and F-M14 on Vercel + Supabase; tests fail before and pass after. Merged into this branch (`8893c6d`; gateway conflicts resolved to the Firestore versions). Owner deploys. |
 | 7b Gateway on Cloud Run | **packaging written, not built or deployed** | `gateway/Dockerfile` (non-root, prod deps only, `HOST=0.0.0.0`), `.dockerignore`; docs/DEPLOYMENT.md §3 (single instance, 3600 s timeout, no key file). No Docker here, so the image is unbuilt. |
 | 2/12 Android Firebase sign-in | **code done, unit-tested, not run on a device** | `data/auth/AuthRepository` + `FirebaseAuthRepository` (Credential Manager → Firebase Auth, Google only), `GoogleSignInScreen`; `AUTH_PROVIDER` switch: debug = Firebase (dev), release = Supabase until cutover; the legacy path is untouched. Google-services plugin with WARN for missing configs. Toolchain: Firebase BoM 35.1.0 (firebase-auth 25.0.0) needed **Kotlin 2.4.0** (was 2.0.21) and **compileSdk 35** (targetSdk stays 34). Tests **16/16** (AuthFlowTest 5 new); `assembleDebug` + `assembleRelease` succeed. Known issue: R8 (AGP 8.7.3) warns that it cannot parse Kotlin 2.4 metadata; the build passes, and the fix is an AGP upgrade (P2). |
-| 5, 8–16 | not started | Decisions D1–D6 **accepted 2026-10-27** (plan §7) |
+| 14 Data migration tooling | **built, verified on emulator; not run on real data** | `firebase/migrate/` export → plan → import → reconcile (docs/DATA_MIGRATION.md). Tests: transform 13/13, export 3/3 (fake Supabase), import 6/6 (emulators, including end-to-end: same Google account → same UID, migrated connector credential syncs with no re-pair, agent UUID preserved). CI job `migrate` added (not yet run on Actions). Blocked for real use: Supabase service key + staging project. |
+| 5, 8–13, 15–16 | not started | Decisions D1–D6 **accepted 2026-10-27** (plan §7) |
 
 Note: firebase-tools 15 (the version in the lockfile) needs JDK 21 for the
 emulator, and this machine has JDK 17, so the local run used
@@ -70,7 +71,7 @@ Docker, `psql`.
 | Cross-user access rejected | PARTIAL | Rules: VERIFIED on emulator (R-2, R-3, R-5, R-6, R-7, R-8, R-10). API/gateway: pending |
 | Security-sensitive fields not client-modifiable | PARTIAL | Rules: VERIFIED on emulator (R-4, R-5, R-7, R-8, R-9, R-10, R-11). Backend validation: pending |
 | Indexes and validation configured | IMPLEMENTED_NOT_VERIFIED | `firestore.indexes.json` written, not deployed; backend zod validation pending |
-| Existing data migrated and reconciled | BLOCKED | Needs Supabase DB credentials (deployment host) + a staging project |
+| Existing data migrated and reconciled | PARTIAL | Tooling VERIFIED on emulator with synthetic data (DATA_MIGRATION.md §7). Real run BLOCKED: Supabase service key + staging project |
 
 ### Backend and gateway
 | Criterion | Status | Evidence / blocker |

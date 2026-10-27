@@ -1,0 +1,19 @@
+{
+  "name": "friday-one-migrate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Supabase (Postgres + Auth) -> Firestore + Firebase Auth migration: export, plan, import, reconcile.",
+  "bin": {
+    "friday-migrate": "src/cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/transform.test.mjs test/export.test.mjs && firebase emulators:exec --config ../firebase.json --project demo-friday-one --only auth,firestore \"node --test --test-concurrency=1 test/import.test.mjs\""
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.0"
+  },
+  "devDependencies": {
+    "firebase-tools": "^15.34.1"
+  }
+}
