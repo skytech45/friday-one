@@ -14,7 +14,7 @@ import com.friday.one.data.CloudSession
 import com.friday.one.data.SupabaseAuth
 import com.friday.one.feature.auth.AuthScreen
 import com.friday.one.feature.cloud.ChatView
-import com.friday.one.feature.cloud.DashboardView
+import com.friday.one.feature.home.DashboardView
 import com.friday.one.feature.pairing.PairingConnectCard
 import com.friday.one.feature.pairing.PairingInstructionsCard
 import com.friday.one.feature.pairing.ServerPairingScreen
