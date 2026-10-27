@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "demo-friday-one",
+    "dev": "friday-969ea",
+    "staging": "REPLACE-friday-one-staging",
+    "prod": "REPLACE-friday-one-prod"
+  }
+}

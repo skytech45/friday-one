@@ -14,9 +14,14 @@ unless it says staging or production.
 | Phase | State | Evidence |
 |---|---|---|
 | 0 Discovery + baseline | **done** | §1 below; plan §1–§2, §8 |
-| 1 Firebase config + emulators | see §2 | |
-| 3–4 Data model + rules + rules tests | see §2 | |
+| 1 Firebase config + emulators | **code done; no project configured** | `firebase/firebase.json`, `.firebaserc` (default = `demo-friday-one`, cannot deploy), `env.example`; docs FIREBASE_SETUP.md, ENVIRONMENT_CONFIGURATION.md. Root Gradle declares `com.google.gms.google-services` 4.5.0 `apply false` (resolves; Android tests 11/11 after the change). |
+| 3 Data model | **designed** | docs/FIREBASE_DATA_MODEL.md, `firebase/firestore.indexes.json` (6 composite indexes; not deployed or validated against a project) |
+| 4 Rules + rules tests | **verified on emulator** | `firebase/firestore.rules`; `firebase/rules-tests` → **34/34 pass** (2026-10-27, firebase-tools 13 emulator on JDK 17; see note). Mutation check: `servers` write loosened → 4 fail. CI job `firestore-rules` added (JDK 21, firebase-tools 15), **not yet run on Actions**. |
 | 2, 5–16 | not started | |
+
+Note: firebase-tools 15 (the version in the lockfile) needs JDK 21 for the
+emulator, and this machine has JDK 17, so the local run used
+`npx firebase-tools@13`. CI runs the locked 15.x on JDK 21.
 
 ---
 
@@ -56,10 +61,10 @@ Docker, `psql`.
 |---|---|---|
 | Google sign-in through Firebase Auth | MISSING | Phase 2/12 |
 | Session restoration and sign-out | MISSING | |
-| Firestore access follows tested least-privilege rules | MISSING | Phase 4 |
-| Cross-user access rejected | MISSING | Phase 4 |
-| Security-sensitive fields not client-modifiable | MISSING | Phase 4 |
-| Indexes and validation configured | MISSING | Phase 3 |
+| Firestore access follows tested least-privilege rules | PARTIAL | Rules **VERIFIED on emulator** (R-1…R-12, 34/34); not deployed to any project; backend (Admin SDK) authorization not written yet |
+| Cross-user access rejected | PARTIAL | Rules: VERIFIED on emulator (R-2, R-3, R-5, R-6, R-7, R-8, R-10). API/gateway: pending |
+| Security-sensitive fields not client-modifiable | PARTIAL | Rules: VERIFIED on emulator (R-4, R-5, R-7, R-8, R-9, R-10, R-11). Backend validation: pending |
+| Indexes and validation configured | IMPLEMENTED_NOT_VERIFIED | `firestore.indexes.json` written, not deployed; backend zod validation pending |
 | Existing data migrated and reconciled | BLOCKED | Needs Supabase DB credentials (deployment host) + a staging project |
 
 ### Backend and gateway
@@ -79,8 +84,8 @@ Docker, `psql`.
 |---|---|---|
 | App Check configured and tested | BLOCKED | Console access + Play Integrity setup (Phase 5) |
 | No secrets in APK or source control | PARTIAL | `google-services.json` and service-account patterns git-ignored; full APK scan pending |
-| Rules and backend authorization tests pass | MISSING | |
-| CI/CD security checks | PARTIAL | Existing gitleaks + typecheck; Firebase jobs pending |
+| Rules and backend authorization tests pass | PARTIAL | Rules tests pass locally (34/34); backend authorization tests not written |
+| CI/CD security checks | PARTIAL | Existing gitleaks + typecheck; `firestore-rules` job added, not yet run on Actions; functions/deploy jobs pending |
 | Backup and rollback documented and tested | PARTIAL | Nightly `pg_dump` exists (RR-09); Firebase rollback doc pending |
 | Cost, quota, monitoring documented | MISSING | |
 | Production deployment evidenced | BLOCKED | Not authorized; projects D1, billing D5 |

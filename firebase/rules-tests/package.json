@@ -1,0 +1,15 @@
+{
+  "name": "friday-one-firestore-rules-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Firestore Security Rules tests against the local emulator (demo project; never a real one).",
+  "scripts": {
+    "test": "firebase emulators:exec --config ../firebase.json --project demo-friday-one --only firestore \"node --test rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.19.0",
+    "firebase-tools": "^15.34.1"
+  }
+}

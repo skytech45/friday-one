@@ -33,6 +33,24 @@ jobs:
         run: bash build-release.sh 0.0.0-ci
         working-directory: connector
 
+  firestore-rules:
+    name: Firestore rules tests (emulator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # firebase-tools 15 requires Java 21 for the Firestore emulator.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+        working-directory: firebase/rules-tests
+      - run: npm test
+        working-directory: firebase/rules-tests
+
   android:
     name: Android build
     runs-on: ubuntu-latest

@@ -1,0 +1,95 @@
+rules_version = '2';
+
+// FRIDAY One Firestore rules (docs/FIRESTORE_SECURITY_RULES.md).
+//
+// Model: clients (the Android app) may only READ records they own, and may
+// write exactly one thing: their own profile's displayName. Every
+// security-sensitive record (servers, credentials, enrollments, policies,
+// jobs, approvals, audit, rate limits, config) is written only by trusted
+// backends through the Admin SDK, which bypasses these rules, so each
+// backend operation carries its own authorization (functions/, gateway/).
+//
+// Ownership is a denormalized `ownerId` on every owner-readable document, so
+// reads never need a get() (cheaper, and no cross-document rule reads).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.uid is string;
+    }
+
+    function ownsExisting() {
+      return signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    // ---- users/{uid}: profile ---------------------------------------------
+    // Created by the API on first sign-in. The owner may change only
+    // displayName (1..120 chars) and must stamp updatedAt with server time.
+    match /users/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'updatedAt'])
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 1
+        && request.resource.data.displayName.size() <= 120
+        && request.resource.data.updatedAt == request.time;
+      allow list, create, delete: if false;
+    }
+
+    // ---- servers and their operational subcollections ---------------------
+    // Read-only to the owner. Enrollment state, connector binding, heartbeat
+    // and revocation are backend-controlled.
+    match /servers/{serverId} {
+      allow read: if ownsExisting();
+      allow write: if false;
+
+      match /agents/{adapter} {
+        allow read: if ownsExisting();
+        allow write: if false;
+      }
+      match /projects/{projectId} {
+        allow read: if ownsExisting();
+        allow write: if false;
+      }
+      match /jobs/{jobId} {
+        allow read: if ownsExisting();
+        allow write: if false;
+      }
+      // Approvals are decided through the gateway, which binds the decision
+      // to the stored payload hash and records decidedBy from the verified
+      // token. A client write here could forge an approval.
+      match /permissionRequests/{requestId} {
+        allow read: if ownsExisting();
+        allow write: if false;
+      }
+    }
+
+    // Collection-group reads ("all my jobs") stay owner-scoped.
+    match /{path=**}/jobs/{jobId} {
+      allow read: if ownsExisting();
+    }
+
+    // ---- policies: read-only to the owner; CRUD via /api/v1/policies ------
+    match /policies/{policyId} {
+      allow read: if ownsExisting();
+      allow write: if false;
+    }
+
+    // ---- audit: the owner may read their own events, nobody may write -----
+    match /auditEvents/{eventId} {
+      allow read: if ownsExisting();
+      allow write: if false;
+    }
+
+    // ---- backend-only collections -----------------------------------------
+    // Credential hashes, enrollment state (including the one-time credential
+    // pickup), token lookups, rate-limit counters and runtime config.
+    match /connectorCredentials/{credentialHash} { allow read, write: if false; }
+    match /enrollments/{enrollmentId}            { allow read, write: if false; }
+    match /enrollmentTokens/{tokenHash}          { allow read, write: if false; }
+    match /rateLimits/{bucket}                   { allow read, write: if false; }
+    match /appConfig/{key}                       { allow read, write: if false; }
+
+    // Everything else is denied by default (no catch-all allow).
+  }
+}
