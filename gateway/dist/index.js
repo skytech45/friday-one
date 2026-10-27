@@ -16,7 +16,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { ENVELOPE_BASE } from "./protocol.js";
 import { ReplayGuard } from "./replay.js";
-import { findLiveCredential, getServerForCredential, touchLastSeen, upsertQueuedJob, setJobState, findQueuedJob, findAgent, upsertAgents, upsertProjects, persistPermissionRequest, decidePermissionRequest, } from "./supabase.js";
+import { findLiveCredential, getServerForCredential, touchLastSeen, upsertQueuedJob, setJobState, cancelJobIfInFlight, findQueuedJob, findAgent, upsertAgents, upsertProjects, persistPermissionRequest, decidePermissionRequest, } from "./supabase.js";
 import { sanitizeAgents, sanitizeProjects } from "./agents.js";
 const PORT = Number(process.env.PORT ?? 8790);
 const HOST = process.env.HOST ?? "127.0.0.1"; // loopback; TLS via tunnel/reverse proxy
@@ -261,7 +261,10 @@ async function handleAppMessage(conn, env) {
             const connector = connectorsByServer.get(job.server_id);
             if (!connector || connector.ownerId !== conn.userId)
                 return;
-            await setJobState(jobId, "cancelled");
+            if (!(await cancelJobIfInFlight(jobId))) {
+                log(`cancel ignored: job ${jobId.slice(0, 8)} already terminal`);
+                return;
+            }
             sendTo(connector, gatewayEnvelope({
                 correlationId: env.message_id, serverId: job.server_id, connectorId: connector.connectorId,
                 eventType: "command.cancel",
