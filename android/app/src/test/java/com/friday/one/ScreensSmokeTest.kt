@@ -11,7 +11,7 @@ import com.friday.one.data.CloudProject
 import com.friday.one.data.CloudServer
 import com.friday.one.data.CloudSession
 import com.friday.one.data.SupabaseAuth
-import com.friday.one.feature.cloud.AuthScreen
+import com.friday.one.feature.auth.AuthScreen
 import com.friday.one.feature.cloud.ChatView
 import com.friday.one.feature.cloud.DashboardView
 import com.friday.one.feature.cloud.ServerPairingScreen
