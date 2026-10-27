@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.friday.one.data.CloudAgent
 import com.friday.one.data.CloudProject
@@ -14,8 +15,11 @@ import com.friday.one.data.SupabaseAuth
 import com.friday.one.feature.auth.AuthScreen
 import com.friday.one.feature.cloud.ChatView
 import com.friday.one.feature.cloud.DashboardView
-import com.friday.one.feature.cloud.ServerPairingScreen
+import com.friday.one.feature.pairing.PairingConnectCard
+import com.friday.one.feature.pairing.PairingInstructionsCard
+import com.friday.one.feature.pairing.ServerPairingScreen
 import com.friday.one.ui.theme.FridayOneTheme
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -119,6 +123,46 @@ class ScreensSmokeTest {
         compose.onNodeWithText("Pair Cloud Server").assertExists()
         compose.onNodeWithText("Generate Pairing Session").assertExists()
         compose.onNodeWithText("vps-2").assertExists()
+    }
+
+    @Test
+    fun pairingInstructionsShowTokenAndCopyState() {
+        compose.setContent {
+            FridayOneTheme {
+                PairingInstructionsCard(token = "enroll-token-123", copiedNotice = true, onTokenCopied = {})
+            }
+        }
+        compose.onNodeWithText("Install Connector on Server").assertExists()
+        compose.onNodeWithText("enroll-token-123").assertExists()
+        compose.onNodeWithText("Token copied to clipboard!").assertExists()
+    }
+
+    @Test
+    fun pairingConnectKeyModeWiresCallbacks() {
+        var mode = 1
+        var pairCalls = 0
+        compose.setContent {
+            FridayOneTheme {
+                PairingConnectCard(
+                    pairingModeTab = 1,
+                    onModeChange = { mode = it },
+                    claiming = false,
+                    codeInput = "1234567890123456",
+                    onCodeInputChange = {},
+                    statusMessage = null,
+                    errorMessage = "Claim failed: boom",
+                    onScanQr = {},
+                    onPairWithKey = { pairCalls++ },
+                )
+            }
+        }
+        compose.onNodeWithText("Pair With This Device").assertExists()
+        compose.onNodeWithText("Claim failed: boom").assertExists()
+        // "Pair with Key" is both the mode tab and the submit button.
+        compose.onAllNodesWithText("Pair with Key")[1].performClick()
+        compose.onNodeWithText("Scan Terminal QR").performClick()
+        assertEquals("submit should call onPairWithKey once", 1, pairCalls)
+        assertEquals("QR tab should request mode 0", 0, mode)
     }
 
     @Test
