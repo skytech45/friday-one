@@ -19,7 +19,10 @@ unless it says staging or production.
 | 4 Rules + rules tests | **verified on emulator** | `firebase/firestore.rules`; `firebase/rules-tests` → **34/34 pass** (2026-10-27, firebase-tools 13 emulator on JDK 17; see note). Mutation check: `servers` write loosened → 4 fail. CI job `firestore-rules` added (JDK 21, firebase-tools 15), **not yet run on Actions**. |
 | 6 `/api/v1` on Cloud Functions | **code done, verified on emulator, not deployed** | `firebase/functions/` (one 2nd-gen HTTPS function `api`, region `asia-south1`). Same paths, methods, status codes and bodies as Vercel; deliberate changes F-M2/3/9/10/11/12. `npm run typecheck` clean. `test/api.test.mjs` → **21/21 pass** on Auth + Firestore emulators (2026-10-27, firebase-tools 13 on JDK 17). Mutation check: removing the jobs ownership check or the claim attempt budget → 2 fail. CI job `functions` added, not yet run on Actions. |
 | 7 Gateway on Firestore | **code done, verified on emulator, not deployed** | `gateway/src/store.ts` replaces `supabase.ts` (firebase-admin; Firebase ID tokens, Google only, revocation checked at connect). Fixes F-M13/14/15/16; UUID constraint F-M17 (also applied to functions). `test/gateway.test.mjs` → **15/15 pass** on emulators (2026-10-27). Mutation check: removing the approval owner check or the revocation listener → 4 fail. Removed fake/live-Supabase scripts (scenarios ported). `cancel-state` fix merged from `fix/gateway-cancel-state` (F-M8). Functions suite re-run after the UUID change: 21/21. Not done: Cloud Run container/deploy config, `friday-gateway.service` still Supabase-era, Android socket reconnect on Cloud Run timeouts. |
-| 2, 5, 8–16 | not started | Decisions D1–D6 **accepted 2026-10-27** (plan §7) |
+| Live hotfix (legacy stack) | **merged to `master` locally, not deployed** | `2e27d57` fixes F-M9 and F-M14 on Vercel + Supabase; tests fail before and pass after. Merged into this branch (`8893c6d`; gateway conflicts resolved to the Firestore versions). Owner deploys. |
+| 7b Gateway on Cloud Run | **packaging written, not built or deployed** | `gateway/Dockerfile` (non-root, prod deps only, `HOST=0.0.0.0`), `.dockerignore`; docs/DEPLOYMENT.md §3 (single instance, 3600 s timeout, no key file). No Docker here, so the image is unbuilt. |
+| 2/12 Android Firebase sign-in | **code done, unit-tested, not run on a device** | `data/auth/AuthRepository` + `FirebaseAuthRepository` (Credential Manager → Firebase Auth, Google only), `GoogleSignInScreen`; `AUTH_PROVIDER` switch: debug = Firebase (dev), release = Supabase until cutover; the legacy path is untouched. Google-services plugin with WARN for missing configs. Toolchain: Firebase BoM 35.1.0 (firebase-auth 25.0.0) needed **Kotlin 2.4.0** (was 2.0.21) and **compileSdk 35** (targetSdk stays 34). Tests **16/16** (AuthFlowTest 5 new); `assembleDebug` + `assembleRelease` succeed. Known issue: R8 (AGP 8.7.3) warns that it cannot parse Kotlin 2.4 metadata; the build passes, and the fix is an AGP upgrade (P2). |
+| 5, 8–16 | not started | Decisions D1–D6 **accepted 2026-10-27** (plan §7) |
 
 Note: firebase-tools 15 (the version in the lockfile) needs JDK 21 for the
 emulator, and this machine has JDK 17, so the local run used
@@ -61,8 +64,8 @@ Docker, `psql`.
 ### Authentication and database
 | Criterion | Status | Evidence / blocker |
 |---|---|---|
-| Google sign-in through Firebase Auth | MISSING | Phase 2/12 |
-| Session restoration and sign-out | MISSING | |
+| Google sign-in through Firebase Auth | IMPLEMENTED_NOT_VERIFIED | `FirebaseAuthRepository`; outcomes and unconfigured builds covered by `AuthFlowTest`. **BLOCKED** on device: debug app + SHA fingerprints (owner console steps) |
+| Session restoration and sign-out | IMPLEMENTED_NOT_VERIFIED | `current()` on start (Firebase SDK persistence), 10-min token refresh in `FirebaseRoot`, `signOut()` clears Firebase and Credential Manager state; not run on a device |
 | Firestore access follows tested least-privilege rules | PARTIAL | Rules **VERIFIED on emulator** (R-1…R-12, 34/34); not deployed to any project; backend (Admin SDK) authorization not written yet |
 | Cross-user access rejected | PARTIAL | Rules: VERIFIED on emulator (R-2, R-3, R-5, R-6, R-7, R-8, R-10). API/gateway: pending |
 | Security-sensitive fields not client-modifiable | PARTIAL | Rules: VERIFIED on emulator (R-4, R-5, R-7, R-8, R-9, R-10, R-11). Backend validation: pending |

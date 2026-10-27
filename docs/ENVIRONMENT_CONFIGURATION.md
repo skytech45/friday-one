@@ -33,7 +33,18 @@ in CI.
 
 ## Android variants
 
-The google-services plugin matches by application ID. Debug builds use
-`com.friday.one.debug`, so the dev project needs a **second Android app**
-registered with that ID (decision D6). Today `google-services.json` lists only
-`com.friday.one`, which would fail every debug build once the plugin is applied.
+The google-services plugin matches by application ID, so each variant has
+its own git-ignored config:
+
+| Variant | App ID | Config file | Backend (`AUTH_PROVIDER`) | Status |
+|---|---|---|---|---|
+| debug | `com.friday.one.debug` | `android/app/src/debug/google-services.json` (dev project) | `firebase` | **file missing**: register the debug app (D6) and add its SHA-1/SHA-256 |
+| release | `com.friday.one` | `android/app/src/release/google-services.json` | `supabase` until cutover | file present locally (moved from `android/app/`); no Android OAuth client (SHA-1) yet |
+
+The plugin runs with `missingGoogleServicesStrategy = WARN`: a variant
+without a config (CI, fresh clones) still builds, and the app shows "Sign-in
+is not configured for this build" instead of crashing (test `AuthFlowTest`).
+
+Gradle properties: `AUTH_PROVIDER` (`firebase` | `supabase`),
+`FIREBASE_API_URL` and `FIREBASE_GATEWAY_URL` (debug), and `CONTROL_PLANE_URL`
+and `GATEWAY_URL` (release).

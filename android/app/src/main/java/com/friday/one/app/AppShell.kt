@@ -14,7 +14,6 @@ import kotlinx.coroutines.launch
 
 @Composable
 internal fun AppDashboardShell(
-    auth: SupabaseAuth,
     session: CloudSession,
     onSignedOut: () -> Unit,
 ) {
@@ -24,7 +23,7 @@ internal fun AppDashboardShell(
     var activeChatServer by remember { mutableStateOf<CloudServer?>(null) }
     var securityOpen by remember { mutableStateOf(false) }
     var pairingOpen by remember { mutableStateOf(false) }
-    var gatewayUrl by remember { mutableStateOf<String?>(com.friday.one.BuildConfig.GATEWAY_URL) }
+    var gatewayUrl by remember { mutableStateOf<String?>(com.friday.one.BuildConfig.GATEWAY_URL.ifBlank { null }) }
     val client = remember { ControlPlaneClient() }
 
     suspend fun reloadServers() {

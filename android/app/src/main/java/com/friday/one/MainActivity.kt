@@ -11,6 +11,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.friday.one.data.AuthCallbacks
 import com.friday.one.data.SupabaseAuth
+import com.friday.one.data.auth.FirebaseAuthRepository
 import com.friday.one.app.FridayApp
 import com.friday.one.ui.theme.FridayOneTheme
 
@@ -23,11 +24,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val cloudAuth = SupabaseAuth(applicationContext)
+        // Migration switch (build property AUTH_PROVIDER): Firebase in debug
+        // builds against the dev project; release stays on Supabase until cutover.
+        val firebaseAuth = if (BuildConfig.AUTH_PROVIDER == "firebase") FirebaseAuthRepository(applicationContext) else null
         handleAuthRedirect(intent?.data)
         setContent {
             FridayOneTheme {
                 Surface(Modifier.fillMaxSize()) {
-                    FridayApp(cloudAuth)
+                    FridayApp(cloudAuth, firebaseAuth)
                 }
             }
         }

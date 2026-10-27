@@ -1,0 +1,8 @@
+node_modules
+dist
+test
+*.test.mjs
+agents-test.mjs
+*.log
+*.service
+.env*
