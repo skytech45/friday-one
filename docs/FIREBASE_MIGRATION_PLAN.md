@@ -254,6 +254,10 @@ credentials, policies). Detail: ROLLBACK_PLAN.md.
 | F-M6 | `agent_sessions` and `chat_messages` exist but nothing reads or writes them. | Info | Not migrated; re-add when session history is built (alignment plan Phase 6). |
 | F-M7 | `audit/*.mjs` test the removed legacy server, and `gateway/{app-submit,replay-tests,audit-tests,cancel-test}.mjs` need live Supabase. None can run as-is. | Info | Ported to emulator-backed tests where they guard migrated behaviour. |
 | F-M8 | The `command.cancel` state fix (`fix/gateway-cancel-state`) is not on this branch's base. | Info | Merge before porting the gateway store. |
+| F-M9 | `GET /api/v1/jobs?server_id=X` never checks that the caller owns X, so **any signed-in user can list another user's jobs** (the service key bypasses RLS). | **High** (cross-user read) | Fixed in the Functions port (404 unless owned); test A-7. The live Vercel API is still affected until cutover. |
+| F-M10 | Claiming never sets `servers.connector_id`, so every newly paired connector sees `rotation_due` on its first sync and rotates immediately. | Low | Credential bound at claim; test A-2. |
+| F-M11 | The claim is check-then-act across several requests: parallel claims can bypass the attempt budget, and a claim that loses the race leaves an issued, **unrevoked credential** behind. | Medium | One transaction per transition; test "parallel correct claims issue exactly one credential". |
+| F-M12 | When the rate limiter itself fails, the Vercel code still answers 429 (the 503 branch is unreachable). | Info | 503 `temporarily_unavailable`, fail closed. |
 
 ## 9. Risks
 

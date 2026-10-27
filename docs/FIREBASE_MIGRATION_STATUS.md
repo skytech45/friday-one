@@ -17,7 +17,8 @@ unless it says staging or production.
 | 1 Firebase config + emulators | **code done; no project configured** | `firebase/firebase.json`, `.firebaserc` (default = `demo-friday-one`, cannot deploy), `env.example`; docs FIREBASE_SETUP.md, ENVIRONMENT_CONFIGURATION.md. Root Gradle declares `com.google.gms.google-services` 4.5.0 `apply false` (resolves; Android tests 11/11 after the change). |
 | 3 Data model | **designed** | docs/FIREBASE_DATA_MODEL.md, `firebase/firestore.indexes.json` (6 composite indexes; not deployed or validated against a project) |
 | 4 Rules + rules tests | **verified on emulator** | `firebase/firestore.rules`; `firebase/rules-tests` → **34/34 pass** (2026-10-27, firebase-tools 13 emulator on JDK 17; see note). Mutation check: `servers` write loosened → 4 fail. CI job `firestore-rules` added (JDK 21, firebase-tools 15), **not yet run on Actions**. |
-| 2, 5–16 | not started | |
+| 6 `/api/v1` on Cloud Functions | **code done, verified on emulator, not deployed** | `firebase/functions/` (one 2nd-gen HTTPS function `api`, region `asia-south1`). Same paths, methods, status codes and bodies as Vercel; deliberate changes F-M2/3/9/10/11/12. `npm run typecheck` clean. `test/api.test.mjs` → **21/21 pass** on Auth + Firestore emulators (2026-10-27, firebase-tools 13 on JDK 17). Mutation check: removing the jobs ownership check or the claim attempt budget → 2 fail. CI job `functions` added, not yet run on Actions. |
+| 2, 5, 7–16 | not started | Decisions D1–D6 **accepted 2026-10-27** (plan §7) |
 
 Note: firebase-tools 15 (the version in the lockfile) needs JDK 21 for the
 emulator, and this machine has JDK 17, so the local run used
@@ -70,12 +71,12 @@ Docker, `psql`.
 ### Backend and gateway
 | Criterion | Status | Evidence / blocker |
 |---|---|---|
-| Every Supabase/Vercel dependency replaced or justified | PARTIAL | Inventory and mapping done (plan §2); no replacement code yet |
-| Trusted APIs validate identity and authorization | MISSING | Phase 6 |
+| Every Supabase/Vercel dependency replaced or justified | PARTIAL | Vercel API: all 11 routes ported (`firebase/functions`). Gateway and Android auth: pending |
+| Trusted APIs validate identity and authorization | IMPLEMENTED_NOT_VERIFIED (staging) · VERIFIED on emulator | A-1 (missing/garbage/non-Google tokens → 401), A-2/A-4/A-5/A-6/A-7/A-8 owner scoping. Forged-signature rejection needs a real project (the emulator issues unsigned tokens) |
 | Gateway supports authenticated WSS | MISSING (on Firebase) | Phase 7 |
 | Replay and duplicate handling tested | MISSING (on Firebase) | Phase 7 |
-| Pairing rate-limited and single-use | MISSING (on Firebase) | Phase 6 |
-| Revocation blocks reconnect and commands | MISSING (on Firebase) | Phase 6/7 |
+| Pairing rate-limited and single-use | VERIFIED on emulator | A-2 (single-use session token, one-time pickup, attempt budget, expiry, parallel claims → one credential), A-3 (10/h exactly under 13 parallel requests; failed-claim throttle; hashed buckets). Trusted client-IP header position on Google's front end: staging (A-3b) |
+| Revocation blocks reconnect and commands | PARTIAL | API side VERIFIED on emulator (A-4: sync 403, rotation refused, enrollments closed). Gateway reconnect refusal: Phase 7 |
 | Connector-side policy enforcement active | NOT_APPLICABLE to change | Connector code unchanged by design |
 | Live output not on high-frequency Firestore writes | IMPLEMENTED_NOT_VERIFIED | By design: `chat.delta` stays on WSS (plan §2.2, §2.4) |
 
