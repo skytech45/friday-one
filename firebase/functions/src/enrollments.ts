@@ -42,7 +42,9 @@ export async function createEnrollment(ownerId: string, name: string): Promise<{
 }> {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = inMs(ENROLL_TOKEN_TTL_MS);
-  const server = db.collection(COL.servers).doc();
+  // Server IDs must be UUIDs: the realtime protocol's envelope schema
+  // (gateway + connector) requires server_id to be one.
+  const server = db.collection(COL.servers).doc(randomUUID());
   const enrollment = db.collection(COL.enrollments).doc();
   const now = FieldValue.serverTimestamp();
   const batch = db.batch();

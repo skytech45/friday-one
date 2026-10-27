@@ -23,8 +23,10 @@ the migration rationale in [FIREBASE_MIGRATION_PLAN.md](FIREBASE_MIGRATION_PLAN.
 4. **Timestamps are server-generated** (`FieldValue.serverTimestamp()` in
    backends; `request.time` is enforced for the one client write).
 5. **No streams in Firestore.** `chat.delta` output stays on the gateway's
-   WebSocket. Jobs store only a bounded `resultSummary` (≤ 4 KiB, to be
-   enforced in the Phase 7 gateway store; today it is a small fixed object).
+   WebSocket. Jobs store only a bounded `resultSummary` (≤ 4 KiB, enforced by
+   the gateway store; larger summaries become `{ truncated, bytes }`).
+7. **Server IDs are UUIDs** (`randomUUID()`), because the realtime envelope
+   schema requires `server_id` to be one.
 6. **No secrets in ordinary documents,** with one bounded exception:
    `enrollments.credentialPickup` holds a freshly issued connector credential
    until the connector collects it (at most 30 min, deleted on pickup). The
@@ -36,7 +38,7 @@ the migration rationale in [FIREBASE_MIGRATION_PLAN.md](FIREBASE_MIGRATION_PLAN.
 |---|---|---|---|---|
 | `users/{uid}` | `displayName` str ≤120, `email` str, `createdAt`, `updatedAt` ts | API (create on first call); owner (`displayName` only) | get own; update `displayName`+`updatedAt==request.time` | point read |
 | `servers/{serverId}` | `ownerId`, `name` ≤120, `hostLabel`, `enrollmentState` (`pending`\|`active`\|`revoked`), `connectorId` (current credential id or null = rotation due), `lastSeenAt`, `createdAt`, `updatedAt` | API (create, revoke, rotate), gateway (`lastSeenAt`) | owner read | `ownerId ==` order `createdAt desc` |
-| `servers/{id}/agents/{adapter}` | `ownerId`, `serverId`, `adapter` ≤40, `adapterVersion` ≤40, `capabilities` map, `health` (`unknown`\|`healthy`\|`degraded`\|`unreachable`), `discoveredAt`, `updatedAt` | gateway (`connector.hello`) | owner read | list per server |
+| `servers/{id}/agents/{adapter}` | `agentId` (UUID used on the wire and in policies; v8 name-based for new agents, preserved for migrated ones), `ownerId`, `serverId`, `adapter` ≤40, `adapterVersion` ≤40, `capabilities` map, `health` (`unknown`\|`healthy`\|`degraded`\|`unreachable`), `discoveredAt`, `updatedAt` | gateway (`connector.hello`) | owner read | list per server |
 | `servers/{id}/projects/{sha256(root)}` | `ownerId`, `serverId`, `canonicalRoot` ≤512, `label` ≤120, `createdAt` | gateway | owner read | list per server |
 | `servers/{id}/jobs/{sha256(serverId:key)}` | `ownerId`, `serverId`, `idempotencyKey` ≤128, `operation` ≤200, `agentId`, `state` (`queued`…`cancelled`), `resultSummary` map ≤4 KiB, `createdAt`, `updatedAt`, `expireAt` | gateway | owner read | group: `ownerId ==` order `updatedAt desc` |
 | `servers/{id}/permissionRequests/{id}` | `ownerId`, `serverId`, `connectorId`, `agentId`, `sessionId`, `operation`, `payloadHash` ≤128, `policyVersion`, `status`, `requestedAt`, `expiresAt`, `decidedBy`, `decidedAt`, `outcome` | gateway (create on `permission.requested`; decide in a transaction only if `pending` and unexpired) | owner read | `status ==` order `expiresAt` |
@@ -84,7 +86,7 @@ nothing relies on it for security. Expiry is always checked in code.
 
 | Doc | Size | Writes |
 |---|---|---|
-| server | < 1 KiB | heartbeat-driven `lastSeenAt`: **planned** throttle to 1 write per 60 s in the Firestore gateway store (Phase 7; today one write per 15 s heartbeat) |
+| server | < 1 KiB | heartbeat-driven `lastSeenAt`: at most 1 write per 60 s **per server** (gateway `touchLastSeen`; heartbeats arrive every 15 s) |
 | job | < 6 KiB | ~4–6 state writes per prompt |
 | permission request | < 1 KiB | 2 per approval |
 | audit event | < 2 KiB | 1–3 per user action |

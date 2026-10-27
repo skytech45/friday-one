@@ -1,36 +1,40 @@
 /**
  * FRIDAY One realtime gateway — single instance (SYSTEM_DESIGN §2: a shared
  * routing layer is only needed multi-instance; durable state lives in
- * Supabase regardless).
+ * Firestore regardless). On Cloud Run it MUST run with max-instances=1:
+ * routing and replay state are in process memory.
  *
  * Two principals connect here, BOTH authenticated per message and per socket:
  *   - connectors: `auth.connector` with the pairing-issued credential
- *     (hash-checked against connector_credentials; revoked/expired refused)
- *   - app clients: `auth.app` with a Supabase access token (JWKS-verified)
+ *     (hash-checked against connectorCredentials; revoked/expired refused,
+ *     and a live socket is closed when its credential or server is revoked)
+ *   - app clients: `auth.app` with a Firebase ID token (Google sign-in)
  *
  * A live socket is transport, never authorization: every sensitive message is
  * re-checked against durable state before routing (§16.5/6).
  */
 import http from "node:http";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
-import { createRemoteJWKSet, jwtVerify } from "jose";
 import { ENVELOPE_BASE, type Envelope } from "./protocol.js";
 import { ReplayGuard } from "./replay.js";
 import {
+  projectId,
+  verifyAppToken,
   findLiveCredential,
   getServerForCredential,
+  watchConnectorAuthorization,
   touchLastSeen,
-  upsertQueuedJob,
+  forgetServer,
+  createQueuedJob,
   setJobState,
   cancelJobIfInFlight,
-  findQueuedJob,
+  findJob,
   findAgent,
   upsertAgents,
   upsertProjects,
   persistPermissionRequest,
   decidePermissionRequest,
-  type ServerRow,
-} from "./supabase.js";
+} from "./store.js";
 import { sanitizeAgents, sanitizeProjects } from "./agents.js";
 
 const PORT = Number(process.env.PORT ?? 8790);
@@ -39,11 +43,10 @@ const MAX_PAYLOAD = 1_048_576; // 1 MiB per message
 
 // Fail fast on missing security-critical env (P2): a gateway that cannot
 // authenticate its principals must not boot.
-for (const name of ["SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_JWKS_URL"]) {
-  if (!process.env[name]) {
-    console.error(`missing required env: ${name} — refusing to start`);
-    process.exit(1);
-  }
+// The Firebase project determines which ID tokens are accepted.
+if (!projectId) {
+  console.error("missing required env: FIREBASE_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) — refusing to start");
+  process.exit(1);
 }
 
 // Dead-connector sweep (P2): a connector whose socket is open but silent for
@@ -58,8 +61,6 @@ setInterval(() => {
     }
   }
 }, 15_000);
-const SUPABASE_URL = process.env.SUPABASE_URL!.replace(/\/$/, "");
-const JWKS = createRemoteJWKSet(new URL(process.env.SUPABASE_JWKS_URL!));
 
 interface ConnectorConn {
   kind: "connector";
@@ -68,6 +69,7 @@ interface ConnectorConn {
   connectorId: string;
   socket: WebSocket;
   lastSeenMs: number; // updated on any authenticated message (idle sweep)
+  unwatch?: () => void; // revocation listener
 }
 interface AppConn {
   kind: "app";
@@ -83,14 +85,9 @@ const identities = new Set<string>(); // live replay identities (cleanup marker)
 
 const log = (m: string): void => console.log(`${new Date().toISOString()} ${m}`);
 
-/** --- app auth ------------------------------------------------------------ */
-async function verifyAppToken(token: string): Promise<string | null> {
-  try {
-    const { payload } = await jwtVerify(token, JWKS, { issuer: `${SUPABASE_URL}/auth/v1` });
-    return typeof payload.sub === "string" ? payload.sub : null;
-  } catch {
-    return null;
-  }
+/** The live connector sockets owned by `userId` (usually one or two). */
+function ownedConnectors(userId: string): ConnectorConn[] {
+  return [...connectorsByServer.values()].filter((c) => c.ownerId === userId);
 }
 
 /** --- envelope plumbing ---------------------------------------------------- */
@@ -148,8 +145,8 @@ async function handleConnectorMessage(conn: ConnectorConn, env: Envelope): Promi
       const agents = sanitizeAgents(payload.agents);
       const projects = sanitizeProjects(payload.projects);
       try {
-        await upsertAgents(conn.serverId, agents);
-        await upsertProjects(conn.serverId, projects);
+        await upsertAgents(conn.serverId, conn.ownerId, agents);
+        await upsertProjects(conn.serverId, conn.ownerId, projects);
         log(
           `connector ${conn.serverId.slice(0, 8)}: ${agents.length} agent(s), ${projects.length} project(s)`,
         );
@@ -163,10 +160,11 @@ async function handleConnectorMessage(conn: ConnectorConn, env: Envelope): Promi
     case "command.started": {
       const jobId = (env.payload as { job_id?: string }).job_id;
       if (typeof jobId !== "string") return;
-      const job = await findQueuedJob(jobId);
-      if (!job || job.server_id !== conn.serverId) return; // forged id: ignore
+      // Looked up under the connector's OWN server: a forged id finds nothing.
+      const job = await findJob(conn.serverId, jobId);
+      if (!job) return;
       const state = env.event_type === "command.accepted" ? "accepted" : "started";
-      await setJobState(jobId, state);
+      if (!(await setJobState(conn.serverId, jobId, state))) return; // terminal: ignore late progress
       forwardToOwnerApps(conn.ownerId, env);
       return;
     }
@@ -181,10 +179,12 @@ async function handleConnectorMessage(conn: ConnectorConn, env: Envelope): Promi
     case "command.failed": {
       const jobId = (env.payload as { job_id?: string }).job_id;
       if (typeof jobId !== "string") return;
-      const job = await findQueuedJob(jobId);
-      if (!job || job.server_id !== conn.serverId) return;
+      const job = await findJob(conn.serverId, jobId);
+      if (!job) return;
       const state = env.event_type === "command.completed" ? "completed" : "failed";
-      await setJobState(jobId, state, (env.payload as { result_summary?: unknown }).result_summary);
+      const summary = (env.payload as { result_summary?: unknown }).result_summary;
+      // A cancelled job stays cancelled; the app still sees the outcome event.
+      await setJobState(conn.serverId, jobId, state, summary);
       forwardToOwnerApps(conn.ownerId, env);
       return;
     }
@@ -198,6 +198,7 @@ async function handleConnectorMessage(conn: ConnectorConn, env: Envelope): Promi
       if (typeof p.operation !== "string" || typeof p.payload_hash !== "string") return;
       const stored = await persistPermissionRequest({
         serverId: conn.serverId,
+        ownerId: conn.ownerId,
         connectorId: conn.connectorId,
         agentId: env.agent_id,
         sessionId: env.session_id,
@@ -284,7 +285,18 @@ async function handleAppMessage(conn: AppConn, env: Envelope): Promise<void> {
         agentId = agent.id;
       }
 
-      const job = await upsertQueuedJob(serverId, idem, p.operation);
+      const { job, created } = await createQueuedJob({
+        serverId, ownerId: conn.userId, idempotencyKey: idem.slice(0, 128), operation: p.operation.slice(0, 200), agentId,
+      });
+      if (!created) {
+        // Same (server, idempotency key) as an earlier submit: never execute
+        // twice. Tell the app which job it already is (F-M15).
+        sendTo(conn, gatewayEnvelope({
+          correlationId: env.message_id, serverId, connectorId: null,
+          eventType: "command.rejected", payload: { reason: "duplicate_request", job_id: job.id, state: job.state },
+        }));
+        return;
+      }
       const dispatch = gatewayEnvelope({
         correlationId: env.message_id,
         serverId,
@@ -301,18 +313,19 @@ async function handleAppMessage(conn: AppConn, env: Envelope): Promise<void> {
     case "command.cancel": {
       const jobId = (env.payload as { job_id?: string }).job_id;
       if (typeof jobId !== "string") return;
-      // Ownership: only the job's server owner may cancel, and the job must
-      // be in a cancellable state (queued/dispatched/accepted/started).
-      const job = await findQueuedJob(jobId);
-      if (!job) return;
-      const connector = connectorsByServer.get(job.server_id);
-      if (!connector || connector.ownerId !== conn.userId) return;
-      if (!(await cancelJobIfInFlight(jobId))) {
+      // Ownership: the job is looked up only under servers this user owns and
+      // has live, and must be in a cancellable state.
+      let connector: ConnectorConn | undefined;
+      for (const c of ownedConnectors(conn.userId)) {
+        if (await findJob(c.serverId, jobId)) { connector = c; break; }
+      }
+      if (!connector) return;
+      if (!(await cancelJobIfInFlight(connector.serverId, jobId))) {
         log(`cancel ignored: job ${jobId.slice(0, 8)} already terminal`);
         return;
       }
       sendTo(connector, gatewayEnvelope({
-        correlationId: env.message_id, serverId: job.server_id, connectorId: connector.connectorId,
+        correlationId: env.message_id, serverId: connector.serverId, connectorId: connector.connectorId,
         eventType: "command.cancel",
         payload: { job_id: jobId },
       }));
@@ -321,16 +334,19 @@ async function handleAppMessage(conn: AppConn, env: Envelope): Promise<void> {
     case "permission.decided": {
       const p = env.payload as { request_id?: string; decision?: string };
       if (typeof p.request_id !== "string" || (p.decision !== "allow" && p.decision !== "deny")) return;
-      // The stored request proves ownership AND the live connector binding.
-      const connector = [...connectorsByServer.values()].find((c) => c.ownerId === conn.userId);
-      const decision = await decidePermissionRequest(
-        p.request_id, conn.userId, p.decision === "allow" ? "approved" : "denied",
-      );
-      if (!decision) return; // not pending / not theirs / replay
-      // Forward ONLY to the connector it was requested by (durable row knows).
-      const target = [...connectorsByServer.values()].find(
-        (c) => c.serverId === decision.server_id && c.ownerId === conn.userId,
-      );
+      // The request is looked up only under this user's live servers, and the
+      // store re-checks owner, pending status and expiry in one transaction
+      // (F-M14). A server whose connector is offline cannot be decided for:
+      // the decision could not be delivered anyway.
+      let decision: Awaited<ReturnType<typeof decidePermissionRequest>> = null;
+      let target: ConnectorConn | undefined;
+      for (const c of ownedConnectors(conn.userId)) {
+        decision = await decidePermissionRequest(
+          c.serverId, p.request_id, conn.userId, p.decision === "allow" ? "approved" : "denied",
+        );
+        if (decision) { target = c; break; }
+      }
+      if (!decision) return; // not pending / not theirs / expired / replay
       if (target) {
         sendTo(target, gatewayEnvelope({
           correlationId: null, serverId: decision.server_id, connectorId: target.connectorId,
@@ -389,9 +405,19 @@ wss.on("connection", (socket: WebSocket) => {
           if (!server) return errorClose(socket, 4403, "server_not_active");
           const existing = connectorsByServer.get(server.id);
           if (existing) existing.socket.close(4529, "superseded");
-          conn = { kind: "connector", serverId: server.id, ownerId: server.owner_id, connectorId: cred.id, socket, lastSeenMs: Date.now() };
+          const connectorConn: ConnectorConn = {
+            kind: "connector", serverId: server.id, ownerId: server.owner_id, connectorId: cred.id, socket, lastSeenMs: Date.now(),
+          };
+          conn = connectorConn;
           connections.add(conn);
           connectorsByServer.set(server.id, conn);
+          // Revocation propagation: a revoked/expired credential or a server
+          // that leaves `active` closes the LIVE socket, not just the next
+          // reconnect. If the listener itself fails, close (fail closed).
+          connectorConn.unwatch = watchConnectorAuthorization(cred, (reason) => {
+            log(`connector deauthorized (${reason}): server=${server.id}`);
+            errorClose(socket, 4403, reason);
+          });
           // Replay guard identity: the CONNECTOR credential id (stable across
           // reconnects for this process, unique per pairing).
           const identity = `connector:${cred.id}`;
@@ -407,8 +433,9 @@ wss.on("connection", (socket: WebSocket) => {
         } else if (env.data.event_type === "auth.app") {
           const token = (env.data.payload as { token?: string }).token;
           if (typeof token !== "string") return errorClose(socket, 4401, "unauthenticated");
-          const userId = await verifyAppToken(token);
-          if (!userId) return errorClose(socket, 4403, "invalid_token");
+          const verified = await verifyAppToken(token);
+          if (!verified) return errorClose(socket, 4403, "invalid_token");
+          const userId = verified.uid;
           conn = { kind: "app", userId, socket };
           connections.add(conn);
           const identity = `app:${userId}`;
@@ -448,9 +475,13 @@ wss.on("connection", (socket: WebSocket) => {
   socket.on("close", () => {
     if (!conn) return;
     connections.delete(conn);
-    if (conn.kind === "connector" && connectorsByServer.get(conn.serverId) === conn) {
-      connectorsByServer.delete(conn.serverId);
-      log(`connector disconnected: server=${conn.serverId}`);
+    if (conn.kind === "connector") {
+      conn.unwatch?.();
+      if (connectorsByServer.get(conn.serverId) === conn) {
+        connectorsByServer.delete(conn.serverId);
+        forgetServer(conn.serverId);
+        log(`connector disconnected: server=${conn.serverId}`);
+      }
     }
   });
   socket.on("error", () => socket.terminate());

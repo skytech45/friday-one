@@ -258,6 +258,11 @@ credentials, policies). Detail: ROLLBACK_PLAN.md.
 | F-M10 | Claiming never sets `servers.connector_id`, so every newly paired connector sees `rotation_due` on its first sync and rotates immediately. | Low | Credential bound at claim; test A-2. |
 | F-M11 | The claim is check-then-act across several requests: parallel claims can bypass the attempt budget, and a claim that loses the race leaves an issued, **unrevoked credential** behind. | Medium | One transaction per transition; test "parallel correct claims issue exactly one credential". |
 | F-M12 | When the rate limiter itself fails, the Vercel code still answers 429 (the 503 branch is unreachable). | Info | 503 `temporarily_unavailable`, fail closed. |
+| F-M13 | The gateway throttles `last_seen_at` writes with **one process-wide** timestamp, so with several connectors only one server is written per minute and the others can drop out of the 2-minute online window. | Medium (false offline) | Per-server throttle; test G-9. |
+| F-M14 | `permission.decided` matches the request by ID and `pending` only, never checking that the decider owns the server, and never checks expiry. Any signed-in user with a request ID can approve or deny another user's request (the decision is not forwarded to the victim's connector, but the request is consumed). | **Medium–High** (approval integrity) | Owner + pending + expiry in one transaction, only under the user's live servers; test G-5/G-7. |
+| F-M15 | A repeated `command.submit` with the same idempotency key resets the job to `queued` and **dispatches it again**, so the prompt executes twice. | Medium | Deterministic job ID + `create()`; a repeat gets `command.rejected{duplicate_request}`; test G-5. |
+| F-M16 | A connector's live socket survives revocation; only its next reconnect is refused. | Medium | Firestore listener on the credential + server closes the socket with 4403 (about a second); expiry by timer; test G-3. |
+| F-M17 | The envelope schema requires UUIDs for `server_id`/`agent_id`. Firestore auto-IDs would break every message. | (Design constraint) | Servers use `randomUUID()`; agents carry a stable `agentId` (v8 UUID, or the migrated one). |
 
 ## 9. Risks
 

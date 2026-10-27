@@ -18,7 +18,8 @@ unless it says staging or production.
 | 3 Data model | **designed** | docs/FIREBASE_DATA_MODEL.md, `firebase/firestore.indexes.json` (6 composite indexes; not deployed or validated against a project) |
 | 4 Rules + rules tests | **verified on emulator** | `firebase/firestore.rules`; `firebase/rules-tests` → **34/34 pass** (2026-10-27, firebase-tools 13 emulator on JDK 17; see note). Mutation check: `servers` write loosened → 4 fail. CI job `firestore-rules` added (JDK 21, firebase-tools 15), **not yet run on Actions**. |
 | 6 `/api/v1` on Cloud Functions | **code done, verified on emulator, not deployed** | `firebase/functions/` (one 2nd-gen HTTPS function `api`, region `asia-south1`). Same paths, methods, status codes and bodies as Vercel; deliberate changes F-M2/3/9/10/11/12. `npm run typecheck` clean. `test/api.test.mjs` → **21/21 pass** on Auth + Firestore emulators (2026-10-27, firebase-tools 13 on JDK 17). Mutation check: removing the jobs ownership check or the claim attempt budget → 2 fail. CI job `functions` added, not yet run on Actions. |
-| 2, 5, 7–16 | not started | Decisions D1–D6 **accepted 2026-10-27** (plan §7) |
+| 7 Gateway on Firestore | **code done, verified on emulator, not deployed** | `gateway/src/store.ts` replaces `supabase.ts` (firebase-admin; Firebase ID tokens, Google only, revocation checked at connect). Fixes F-M13/14/15/16; UUID constraint F-M17 (also applied to functions). `test/gateway.test.mjs` → **15/15 pass** on emulators (2026-10-27). Mutation check: removing the approval owner check or the revocation listener → 4 fail. Removed fake/live-Supabase scripts (scenarios ported). `cancel-state` fix merged from `fix/gateway-cancel-state` (F-M8). Functions suite re-run after the UUID change: 21/21. Not done: Cloud Run container/deploy config, `friday-gateway.service` still Supabase-era, Android socket reconnect on Cloud Run timeouts. |
+| 2, 5, 8–16 | not started | Decisions D1–D6 **accepted 2026-10-27** (plan §7) |
 
 Note: firebase-tools 15 (the version in the lockfile) needs JDK 21 for the
 emulator, and this machine has JDK 17, so the local run used
@@ -73,10 +74,10 @@ Docker, `psql`.
 |---|---|---|
 | Every Supabase/Vercel dependency replaced or justified | PARTIAL | Vercel API: all 11 routes ported (`firebase/functions`). Gateway and Android auth: pending |
 | Trusted APIs validate identity and authorization | IMPLEMENTED_NOT_VERIFIED (staging) · VERIFIED on emulator | A-1 (missing/garbage/non-Google tokens → 401), A-2/A-4/A-5/A-6/A-7/A-8 owner scoping. Forged-signature rejection needs a real project (the emulator issues unsigned tokens) |
-| Gateway supports authenticated WSS | MISSING (on Firebase) | Phase 7 |
-| Replay and duplicate handling tested | MISSING (on Firebase) | Phase 7 |
+| Gateway supports authenticated WSS | VERIFIED on emulator · not deployed | G-2 (garbage/non-Google app tokens 4403; unknown/revoked/expired/inactive connector credentials 4403; auth-first 4401) |
+| Replay and duplicate handling tested | VERIFIED on emulator | G-8 (duplicate message ID dropped, stale sequence 4400, malformed 4400), G-5 (repeated idempotency key never re-dispatched) |
 | Pairing rate-limited and single-use | VERIFIED on emulator | A-2 (single-use session token, one-time pickup, attempt budget, expiry, parallel claims → one credential), A-3 (10/h exactly under 13 parallel requests; failed-claim throttle; hashed buckets). Trusted client-IP header position on Google's front end: staging (A-3b) |
-| Revocation blocks reconnect and commands | PARTIAL | API side VERIFIED on emulator (A-4: sync 403, rotation refused, enrollments closed). Gateway reconnect refusal: Phase 7 |
+| Revocation blocks reconnect and commands | VERIFIED on emulator · live E2E pending | API: A-4. Gateway: G-2 (revoked/expired credential refused at connect), G-3 (live socket closed on credential revoke, server revoke, grace expiry). Real VPS run: E-1 |
 | Connector-side policy enforcement active | NOT_APPLICABLE to change | Connector code unchanged by design |
 | Live output not on high-frequency Firestore writes | IMPLEMENTED_NOT_VERIFIED | By design: `chat.delta` stays on WSS (plan §2.2, §2.4) |
 

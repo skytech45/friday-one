@@ -106,6 +106,8 @@ describe("A-2 enrollment and pairing", () => {
     const alice = await googleUser("alice");
     const p = await pair(alice);
     assert.match(p.credential, /^[A-Za-z0-9_-]{40,}$/);
+    // The realtime envelope schema requires server_id to be a UUID.
+    assert.match(p.serverId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
     // One-time pickup: a second poll gets no credential.
     const again = await call("POST", "/api/v1/enrollments/session/poll", { body: { token: p.token } });

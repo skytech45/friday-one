@@ -43,7 +43,8 @@ export async function listServers(uid: string): Promise<unknown[]> {
       online: lastSeen !== null && Date.now() - lastSeen < ONLINE_WINDOW_MS,
       last_seen_at: iso(s.get("lastSeenAt")),
       agents: agents.docs.map((a) => ({
-        id: a.id,
+        // The protocol-level agent ID (a UUID); documents are keyed by adapter.
+        id: a.get("agentId") ?? a.id,
         adapter: a.get("adapter"),
         version: a.get("adapterVersion") ?? null,
         health: a.get("health") ?? "unknown",

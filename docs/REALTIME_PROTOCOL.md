@@ -74,7 +74,7 @@ Validation rules (gateway and connector, both directions):
 | `terminal.output` | C→G | `{ chunk, seq }` | legacy PTY bridge; bounded, backpressured |
 | `permission.requested` | C→G | `{ operation, payload_hash, policy_version, expires_at, context }` | persisted BEFORE the app is notified |
 | `permission.decided` | G→C | `{ request_id, decision, decided_by, decided_at }` | connector revalidates locally before executing |
-| `command.submit` | A→G | `{ operation, arguments, idempotency_key, expires_at }` | structured operation, NEVER a shell string; `arguments.agent` selects a reported adapter, unknown → `command.rejected{agent_not_available}` |
+| `command.submit` | A→G | `{ operation, arguments, idempotency_key, expires_at }` | structured operation, NEVER a shell string; `arguments.agent` selects a reported adapter, unknown → `command.rejected{agent_not_available}`; a repeated `idempotency_key` for the same server is never dispatched again → `command.rejected{duplicate_request, job_id, state}` (Firebase gateway) |
 | `command.accepted` / `command.started` | C→G | `{ job_id }` | acks with explicit state transitions |
 | `command.completed` / `command.failed` | C→G | `{ job_id, result_summary }` | bounded summary; big output stays on the connector |
 | `command.cancel` | A→G | `{ job_id }` | idempotent; cancelled jobs never resume |
