@@ -11,7 +11,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.friday.one.data.AuthCallbacks
 import com.friday.one.data.SupabaseAuth
-import com.friday.one.feature.cloud.CloudScreen
+import com.friday.one.app.FridayApp
 import com.friday.one.ui.theme.FridayOneTheme
 
 /**
@@ -27,7 +27,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             FridayOneTheme {
                 Surface(Modifier.fillMaxSize()) {
-                    CloudScreen(cloudAuth)
+                    FridayApp(cloudAuth)
                 }
             }
         }
