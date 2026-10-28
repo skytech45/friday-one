@@ -4,7 +4,7 @@ The connector is a small service on your Linux VPS. It connects **out** to
 the FRIDAY One gateway (no inbound ports), runs only operations your
 policies allow, and talks to OpenCode or Hermes on that server.
 
-> **Status (2026-10-28):** use release **`v0.9.1`** or later. Its assets
+> **Status (2026-10-28):** use release **`v0.9.2`** or later. Its assets
 > were downloaded and checked after publishing (checksums, pinned versions,
 > the connector starts). `v0.6.0` and `v0.9.0` ship a connector that does not
 > start and an installer that cannot pair (FULL_SYSTEM_AUDIT.md A-1/A-3).
@@ -36,15 +36,15 @@ port** is opened or needed; leave your firewall and SSH settings as they are.
 
 ## 5. Download and verify the installer
 
-These commands install `v0.9.1`; for a newer release, change the tag in
+These commands install `v0.9.2`; for a newer release, change the tag in
 both URLs. Versioned URLs are reproducible; avoid `latest` for installs.
 
 ```bash
-curl -fsSLO https://github.com/skytech45/friday-one/releases/download/v0.9.1/install.sh
+curl -fsSLO https://github.com/skytech45/friday-one/releases/download/v0.9.2/install.sh
 ```
 
 ```bash
-curl -fsSLO https://github.com/skytech45/friday-one/releases/download/v0.9.1/install.sh.sha256
+curl -fsSLO https://github.com/skytech45/friday-one/releases/download/v0.9.2/install.sh.sha256
 ```
 
 ```bash
@@ -86,9 +86,8 @@ The wizard:
 1. checks OS, architecture, systemd, Node.js and disk;
 2. asks for the **control plane URL** (HTTPS only) and checks `/api/v1/health`;
 3. takes the **gateway URL** advertised by the control plane (you can override it).
-   The hosted control plane currently advertises an `https://` address. In
-   `v0.9.1` setup rejects it: type the same address with `wss://` instead.
-   Later releases convert `https://` to `wss://` automatically;
+   An advertised or typed `https://` address is converted to `wss://`
+   (`v0.9.1` rejected it; there, type `wss://` yourself);
 4. asks which **project directories** the agent may work in (they must
    exist; system paths are refused) and grants write access to those only;
 5. asks for the **enrollment token**. In the app: *Add Server → Generate
@@ -154,10 +153,10 @@ Logs come from the systemd journal, with credential-shaped values redacted.
 ## 13. Update
 
 ```bash
-sudo fridayone update v0.9.1
+sudo fridayone update v0.9.2
 ```
 
-Replace `v0.9.1` with the release you're moving to.
+Replace `v0.9.2` with the release you're moving to.
 
 This downloads that release's installer, verifies its checksum, replaces the
 binaries, keeps your configuration and pairing, and restarts the service if

@@ -23,9 +23,9 @@ Not production-ready. The current verified state, known defects and open
 gates are in [docs/FULL_SYSTEM_AUDIT.md](docs/FULL_SYSTEM_AUDIT.md) and
 [docs/PRODUCTION_READINESS_CHECKLIST.md](docs/PRODUCTION_READINESS_CHECKLIST.md).
 
-> **Install from `v0.9.1` or later.** The `v0.6.0` and `v0.9.0` connector
+> **Install from `v0.9.2` or later.** The `v0.6.0` and `v0.9.0` connector
 > bundles do not start and their installer cannot pair (audit A-1, A-3).
-> `v0.9.1` assets were downloaded and checked after publishing; a full
+> `v0.9.2` assets were downloaded and checked after publishing; a full
 > app-to-agent run on a real VPS has not been done yet (gate E-1).
 
 ## Supported platforms
@@ -37,15 +37,15 @@ gates are in [docs/FULL_SYSTEM_AUDIT.md](docs/FULL_SYSTEM_AUDIT.md) and
 
 ## Install the connector on a VPS
 
-Download, verify and read the installer for a specific release (`v0.9.1`
+Download, verify and read the installer for a specific release (`v0.9.2`
 is the current one; use a newer tag from the Releases page if there is one):
 
 ```bash
-curl -fsSLO https://github.com/skytech45/friday-one/releases/download/v0.9.1/install.sh
+curl -fsSLO https://github.com/skytech45/friday-one/releases/download/v0.9.2/install.sh
 ```
 
 ```bash
-curl -fsSLO https://github.com/skytech45/friday-one/releases/download/v0.9.1/install.sh.sha256
+curl -fsSLO https://github.com/skytech45/friday-one/releases/download/v0.9.2/install.sh.sha256
 ```
 
 ```bash
@@ -68,11 +68,6 @@ Server → Generate Pairing Session*). The token is read without echo. It
 shows a **QR code and a numeric code**: scan or type it in the app. It
 then waits until the gateway has **authenticated** the connector, and
 reports each stage separately.
-
-> **Gateway URL prompt:** the hosted control plane currently advertises its
-> gateway as `https://…`, which `v0.9.1` setup rejects. Enter the same
-> address with `wss://` instead (see [Troubleshooting](docs/TROUBLESHOOTING.md)).
-> Releases after `v0.9.1` convert it automatically.
 
 Verify at any time:
 
