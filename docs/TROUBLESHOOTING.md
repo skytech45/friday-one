@@ -11,6 +11,7 @@ credentials. `fridayone logs` shows the service journal with secrets redacted.
 | **App: sign-in fails** | Google sign-in isn't configured for this build (Firebase debug app or SHA fingerprints missing) | see `docs/FIREBASE_SETUP.md` on the `firebase/migration-phase-0` branch; the app shows "Sign-in is not configured" when its config is missing |
 | **"this command changes system files"** | `setup`, `reconnect`, `update` and `uninstall` need root | prefix with `sudo` |
 | **doctor: control plane unreachable or TLS invalid** | DNS, firewall egress, proxy, or an intercepted certificate | `curl -v https://<control-plane>/api/v1/health`; allow outbound 443; don't disable TLS checks |
+| **setup: invalid gateway URL** with the suggested default | the hosted control plane advertises `https://…` for the gateway | type the same address with `wss://` |
 | **doctor: gateway unreachable** | wrong gateway URL or no egress | re-run setup to take the URL from the control plane's `/health` |
 | **status: "REFUSED" / revoked** | the server was revoked, or its credential expired after a rotation grace period | `sudo fridayone setup` to pair again |
 | **status: disconnected, logs show `reconnect in …ms`** | gateway temporarily unavailable; backoff up to 60 s with jitter | wait; if it persists, run `fridayone doctor`. Connectors **before this fix** never reconnected (audit A-2): upgrade |

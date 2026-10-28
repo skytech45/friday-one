@@ -4,12 +4,11 @@ The connector is a small service on your Linux VPS. It connects **out** to
 the FRIDAY One gateway (no inbound ports), runs only operations your
 policies allow, and talks to OpenCode or Hermes on that server.
 
-> **Status (2026-10-28):** the installer and `fridayone` CLI described here
-> are on branch `feat/fridayone-cli`. They are **not in a published release
-> yet**. The current `v0.9.0` release still contains the old installer and a
-> connector bundle that does not start (see FULL_SYSTEM_AUDIT.md A-1/A-3).
-> The commands below work once a release built from this branch is
-> published. Until then, the one-line install is **BLOCKED**.
+> **Status (2026-10-28):** use release **`v0.9.1`** or later. Its assets
+> were downloaded and checked after publishing (checksums, pinned versions,
+> the connector starts). `v0.6.0` and `v0.9.0` ship a connector that does not
+> start and an installer that cannot pair (FULL_SYSTEM_AUDIT.md A-1/A-3).
+> A full app-to-agent run on a real VPS has not been done yet.
 
 ## 1. Supported systems
 
@@ -37,15 +36,15 @@ port** is opened or needed; leave your firewall and SSH settings as they are.
 
 ## 5. Download and verify the installer
 
-Replace `vX.Y.Z` with the release you're installing (see the repository's
-Releases page). Versioned URLs are reproducible; avoid `latest` for installs.
+These commands install `v0.9.1`; for a newer release, change the tag in
+both URLs. Versioned URLs are reproducible; avoid `latest` for installs.
 
 ```bash
-curl -fsSLO https://github.com/skytech45/friday-one/releases/download/vX.Y.Z/install.sh
+curl -fsSLO https://github.com/skytech45/friday-one/releases/download/v0.9.1/install.sh
 ```
 
 ```bash
-curl -fsSLO https://github.com/skytech45/friday-one/releases/download/vX.Y.Z/install.sh.sha256
+curl -fsSLO https://github.com/skytech45/friday-one/releases/download/v0.9.1/install.sh.sha256
 ```
 
 ```bash
@@ -86,7 +85,9 @@ sudo fridayone setup
 The wizard:
 1. checks OS, architecture, systemd, Node.js and disk;
 2. asks for the **control plane URL** (HTTPS only) and checks `/api/v1/health`;
-3. takes the **gateway URL** advertised by the control plane (you can override it);
+3. takes the **gateway URL** advertised by the control plane (you can override it).
+   The hosted control plane currently advertises an `https://` address, which
+   setup rejects: type the same address with `wss://` instead;
 4. asks which **project directories** the agent may work in (they must
    exist; system paths are refused) and grants write access to those only;
 5. asks for the **enrollment token**. In the app: *Add Server → Generate
@@ -152,8 +153,10 @@ Logs come from the systemd journal, with credential-shaped values redacted.
 ## 13. Update
 
 ```bash
-sudo fridayone update vX.Y.Z
+sudo fridayone update v0.9.1
 ```
+
+Replace `v0.9.1` with the release you're moving to.
 
 This downloads that release's installer, verifies its checksum, replaces the
 binaries, keeps your configuration and pairing, and restarts the service if

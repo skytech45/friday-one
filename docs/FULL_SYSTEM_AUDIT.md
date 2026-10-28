@@ -30,7 +30,8 @@ Statuses: `VERIFIED` · `IMPLEMENTED_NOT_VERIFIED` · `PARTIAL` · `MISSING` ·
 | A-8 | P1 | Enrollment poll put the token in the URL (F-M2); live control plane only supported GET. | `POST /enrollments/session/poll` on Vercel (rewrite, no extra function) and in the connector, GET kept for ≤ v0.9.0 | `control-plane/test/session-poll.test.ts`; `lifecycle.test.ts` |
 | A-9 | P2 | Installer downloaded to fixed `/tmp/<name>` paths as root (symlink race). | private `mktemp -d`, trap cleanup | code review |
 | A-10 | P2 | No status/diagnostics; `uninstall` deleted config without asking; version always "0.1.0". | `fridayone status/doctor/logs`, guarded uninstall, tag embedded in builds | harness |
-| A-11 | **open** | Published `v0.9.0` still ships the broken bundle (A-1) and old installer (A-3). | publish a new release from this branch | needs your authorization |
+| A-11 | fixed | Published `v0.9.0` ships the broken bundle (A-1) and old installer (A-3). | released `v0.9.1` | assets downloaded after publishing: checksums OK, bundle runs, installer and CLI pinned to `v0.9.1` |
+| A-13 | open | Live control plane advertises the gateway as `https://…`; `fridayone setup` accepts only `wss://`, so the suggested default fails. | convert `https://` → `wss://` in setup (or fix the advertised URL) | live `/api/v1/health`, 2026-10-28 |
 | A-12 | open (known) | F-M1: issued credential held in plaintext server-side until pickup. | connector-generated credential (protocol change, not done) | — |
 
 Earlier findings F-M1…F-M19 (migration audit) are tracked in
@@ -70,7 +71,7 @@ Columns: **A** Android · **API** control plane / Firebase functions · **GW** g
 | Android error/offline states | partial (alignment plan Phase 2) | — | — | — | smoke tests | PARTIAL |
 | Connector installation + upgrades | — | — | — | `install.sh` | harness; E2E (CI) | IMPLEMENTED_NOT_VERIFIED until CI |
 | CLI setup + diagnostics | — | — | — | `fridayone` | harness 29/29 | VERIFIED (stubbed) · real systemd pending |
-| GitHub release + install docs | — | — | — | release workflow | `v0.9.0` published and checked | PARTIAL: `v0.9.0` assets broken (A-11) |
+| GitHub release + install docs | — | — | — | release workflow | `v0.9.1` published and checked | VERIFIED (assets); live install on a VPS not run |
 
 ## 3. Pairing and token verification (as implemented)
 
