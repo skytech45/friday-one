@@ -12,10 +12,10 @@ merge both when that branch lands.
 |---|---|---|
 | C-1 | Release bundle starts (A-1) | IMPLEMENTED_NOT_VERIFIED: fixed + smoke-run locally; **published `v0.9.0` FAILED** |
 | C-2 | Reconnects after any disconnect (A-2) | VERIFIED (unit); live pending |
-| C-3 | `fridayone --help/--version/setup/status/doctor/logs/reconnect/update/uninstall` | VERIFIED with stubs (harness 29/29); real systemd pending CI |
-| C-4 | Runs unprivileged, no inbound port, survives restart, no restart loop on revocation | IMPLEMENTED_NOT_VERIFIED (`installer-e2e.sh`, runs on CI) |
-| C-5 | Download integrity, fail closed | IMPLEMENTED_NOT_VERIFIED (tamper test on CI); signatures MISSING |
-| C-6 | Upgrade preserves config; uninstall safe | IMPLEMENTED_NOT_VERIFIED (CI) |
+| C-3 | `fridayone --help/--version/setup/status/doctor/logs/reconnect/update/uninstall` | VERIFIED: harness 29/29 + real systemd E2E 32/32 (CI run 40636455675) |
+| C-4 | Runs unprivileged, no inbound port, survives restart, no restart loop on revocation | VERIFIED (CI, real systemd) |
+| C-5 | Download integrity, fail closed | VERIFIED (CI tamper test); signatures MISSING |
+| C-6 | Upgrade preserves config; uninstall safe | VERIFIED (CI) |
 | C-7 | No secrets in logs, argv, URLs or shell history | VERIFIED (harness) for the token; journal check on CI |
 | C-8 | Real release published with these fixes | BLOCKED: needs authorization to push, merge and release |
 

@@ -15,12 +15,16 @@ actually executed; anything not run says so.
 | Connector bundle smoke | `bash build-release.sh v9.9.9-test` + run | `version` → tag; `agents` lists adapters; unpaired `run` exits 78 with state `unpaired` |
 | Published bundles | ran `v0.6.0` and `v0.9.0` release assets | **FAILED**: both crash with `Dynamic require of "fs"` (A-1) |
 
-## 2. Implemented, not yet executed
+## 2. Linux CI (GitHub Actions, ubuntu-24.04, real systemd)
 
-| Suite | Why not run | How it runs |
-|---|---|---|
-| `connector/test/e2e/installer-e2e.sh` (Test F + C + E on real systemd) | needs root + systemd; this machine is Windows | CI job `installer-e2e` (ubuntu-24.04) after this branch is pushed |
-| ShellCheck | not installed locally | CI connector job |
+Run [40636455675](https://github.com/skytech45/friday-one/actions/runs/40636455675) at `dd99059` — **all jobs green**:
+
+| Suite | Result |
+|---|---|
+| `connector/test/e2e/installer-e2e.sh` (Tests F + C + E on real systemd, as root on the runner) | **32/32**: verified install; real pairing via `fridayone setup`; gateway authentication; token never in a URL; credential 0600 / config 0640; runs as `friday-connector`; no inbound port; status/doctor; reused token rejected; reconnect after a gateway drop; restart recovery; enabled at boot; revocation stops the service (exit 78) with **no restart loop** and no reconnect hammering; idempotent re-install; upgrade keeps config; tampered download fails closed and leaves the installed binary untouched; no token/credential in the journal; `uninstall --purge` |
+| Connector unit + lifecycle (Linux) | **12/12** |
+| CLI harness (Linux) | **29/29** |
+| ShellCheck (install.sh, fridayone, test scripts) | clean (first run flagged one `ls | grep` in the harness; fixed in `dd99059`) |
 
 ## 3. Results from the Firebase migration branch (emulator, 2026-10-27; CI green)
 
@@ -35,10 +39,10 @@ reconnect). CI run [40505895763](https://github.com/skytech45/friday-one/actions
 |---|---|---|
 | A Authentication | PARTIAL | API + gateway token checks VERIFIED on emulator; device sign-in BLOCKED (Firebase console steps) |
 | B Pairing | PARTIAL | API state machine VERIFIED (emulator); VPS side via `fridayone setup`: harness VERIFIED (stubbed), real systemd pending CI; app scan/claim on a device not run |
-| C Gateway | PARTIAL | reconnect fixed + unit-verified; gateway restart/drop and service restart covered by `installer-e2e.sh` (pending CI); live Cloud Run not deployed |
+| C Gateway | PARTIAL | reconnect after a gateway drop and service restart VERIFIED (CI, fake gateway); live gateway not tested |
 | D Agent operation | BLOCKED | no VPS with OpenCode/Hermes here; policy gate verified (`dispatch.test.ts`, migration CI) |
-| E Revocation | PARTIAL | API A-4, gateway G-3 VERIFIED (emulator); connector stops on 4403 unit-verified; systemd behaviour in `installer-e2e.sh` (pending CI) |
-| F Installer | IMPLEMENTED_NOT_VERIFIED | full script written; runs on CI only |
+| E Revocation | PARTIAL | API A-4, gateway G-3 VERIFIED (emulator); connector + systemd behaviour VERIFIED (CI); live end to end not run |
+| F Installer | VERIFIED (CI, real systemd) | installer-e2e.sh 32/32; reboot = service restart path (a real reboot was not performed) |
 | G Firebase authorization | VERIFIED (emulator) | rules 34/34, API ownership tests |
 
 **The Android app, backend, gateway, connector and an agent have not been
