@@ -12,13 +12,13 @@ merge both when that branch lands.
 |---|---|---|
 | C-1 | Release bundle starts (A-1) | VERIFIED: published `v0.9.1` bundle downloaded and run (`version` → `v0.9.1`); `v0.9.0` FAILED |
 | C-2 | Reconnects after any disconnect (A-2) | VERIFIED (unit); live pending |
-| C-3 | `fridayone --help/--version/setup/status/doctor/logs/reconnect/update/uninstall` | VERIFIED: harness 29/29 + real systemd E2E 32/32 (CI run 40636455675) |
+| C-3 | `fridayone --help/--version/setup/status/doctor/logs/reconnect/update/uninstall` | VERIFIED: harness 30/30 + real systemd E2E 32/32 (CI run 40636455675) |
 | C-4 | Runs unprivileged, no inbound port, survives restart, no restart loop on revocation | VERIFIED (CI, real systemd) |
 | C-5 | Download integrity, fail closed | VERIFIED (CI tamper test); signatures MISSING |
 | C-6 | Upgrade preserves config; uninstall safe | VERIFIED (CI) |
 | C-7 | No secrets in logs, argv, URLs or shell history | VERIFIED: harness (token never in config/argv/output) + CI (no token/credential in the journal, no token in URLs) |
 | C-8 | Real release published with these fixes | VERIFIED: [`v0.9.1`](https://github.com/skytech45/friday-one/releases/tag/v0.9.1), release run 40636706424; 10 assets, checksums OK, installer pinned to `v0.9.1`, APK signer `1a27d819…` |
-| C-9 | Setup accepts the gateway URL the control plane advertises | MISSING: live `/api/v1/health` returns `https://`, setup needs `wss://` (manual workaround documented; A-13) |
+| C-9 | Setup accepts the gateway URL the control plane advertises | VERIFIED (harness 30/30) on `master`, not released: setup converts `https://` → `wss://`; `v0.9.1` users type `wss://` (A-13) |
 
 ## Backend and gateway (legacy stack, live)
 

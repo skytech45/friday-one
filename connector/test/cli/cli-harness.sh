@@ -29,7 +29,7 @@ rm -rf "$CONNECTOR/release"
 echo "[Unit]" > "$R/etc/systemd/system/friday-connector.service"
 
 PORTS="$R/.ports.json"
-(cd "$CONNECTOR" && node test/e2e/fake-backend.mjs "$PORTS") & BACKEND_PID=$!
+(cd "$CONNECTOR" && FAKE_ADVERTISE_SCHEME=http node test/e2e/fake-backend.mjs "$PORTS") & BACKEND_PID=$!
 for _ in $(seq 1 50); do [ -s "$PORTS" ] && break; sleep 0.2; done
 HTTP_PORT="$(node -p "require('$PORTS'.replace(/\\\\/g,'/')).http" 2>/dev/null || node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).http))" "$PORTS")"
 WS_PORT="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).ws))" "$PORTS")"
@@ -99,7 +99,7 @@ done
 printf '%s' "$out" | grep -q "✖ Agent available" && ok "setup report: missing agent is reported, not hidden" || nope "agent stage" "$out"
 has "$out" "End-to-end command test: not run here" && ok "setup does not claim an end-to-end test it did not run" || nope "e2e honesty" "$out"
 env_now="$(cat "$R/etc/friday-connector/connector.env")"
-has "$env_now" "FRIDAY_GATEWAY_URL=ws://127.0.0.1:$WS_PORT" && ok "gateway URL taken from the control plane's /health" || nope "gateway from health" "$env_now"
+has "$env_now" "FRIDAY_GATEWAY_URL=ws://127.0.0.1:$WS_PORT" && ok "advertised http(s) gateway URL from /health saved as ws(s)" || nope "gateway from health" "$env_now"
 has "$env_now" "FRIDAY_ALLOWED_ROOTS=/srv/app" && ok "project root saved" || nope "roots" "$env_now"
 grep -q "ReadWritePaths= /srv/app" "$R/etc/systemd/system/friday-connector.service.d/10-project-roots.conf" && ok "systemd drop-in grants only the project root" || nope "drop-in" "$(cat "$R/etc/systemd/system/friday-connector.service.d/10-project-roots.conf" 2>&1)"
 if grep -rqF "$TOKEN" "$R/etc" "$LOG" 2>/dev/null || has "$out" "$TOKEN"; then nope "token leaked to config, argv log or output"; else ok "enrollment token never written, echoed or passed in argv"; fi
@@ -116,6 +116,14 @@ out="$(printf 'N\n\n\n/etc\n' | run setup)"; rc=$?
 [ "$rc" -ne 0 ] && has "$out" "not an allowed project directory: /etc" && ok "setup refuses system paths as project roots" || nope "root /etc" "$out"
 out="$(printf 'N\n\nwss://gw.example.test/x?token=abc\n' | run setup)"; rc=$?
 [ "$rc" -ne 0 ] && has "$out" "invalid gateway URL" && ok "setup refuses URLs with query strings (no secrets in URLs)" || nope "url query" "$out"
+
+out="$(printf 'y
+
+https://gw.example.test/realtime
+/srv/app
+%s
+' "$TOKEN" | run setup)"; rc=$?
+{ [ "$rc" -eq 0 ] && grep -q "^FRIDAY_GATEWAY_URL=wss://gw.example.test/realtime$" "$R/etc/friday-connector/connector.env"; }   && ok "typed https:// gateway URL saved as wss://" || nope "typed https gateway (rc=$rc)" "$out"
 
 out="$(STUB_CONNECT=revoked run reconnect)"; rc=$?
 [ "$rc" -eq 78 ] && has "$out" "revoked or expired" && ok "reconnect after revocation: exit 78 with re-pair hint" || nope "revoked reconnect (rc=$rc)" "$out"

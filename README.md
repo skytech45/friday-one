@@ -70,8 +70,9 @@ then waits until the gateway has **authenticated** the connector, and
 reports each stage separately.
 
 > **Gateway URL prompt:** the hosted control plane currently advertises its
-> gateway as `https://…`, which setup rejects. Enter the same address with
-> `wss://` instead (see [Troubleshooting](docs/TROUBLESHOOTING.md)).
+> gateway as `https://…`, which `v0.9.1` setup rejects. Enter the same
+> address with `wss://` instead (see [Troubleshooting](docs/TROUBLESHOOTING.md)).
+> Releases after `v0.9.1` convert it automatically.
 
 Verify at any time:
 

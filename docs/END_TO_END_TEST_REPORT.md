@@ -11,7 +11,7 @@ actually executed; anything not run says so.
 | Connector unit + lifecycle | `cd connector && npm test` | **10/12**; the 2 failures are the long-standing Windows-only PATH tests (pass on Linux CI) |
 | — lifecycle tests (new) | `npx tsx --test src/lifecycle.test.ts` | **4/4**: state file atomic + redacted; 4403 fatal vs reconnect after a normal close (**failed before fix A-2**); POST poll |
 | Control plane | `cd control-plane && npm test` | **6/6** (F-M9 jobs ownership 4, POST poll 2) |
-| `fridayone` CLI harness | `cd connector && bash test/cli/cli-harness.sh` | **29/29** (stubbed systemd/runuser; fake backend). Mutation check: allowing query strings in URLs → 1 failure |
+| `fridayone` CLI harness | `cd connector && bash test/cli/cli-harness.sh` | **30/30** (stubbed systemd/runuser; fake backend advertising an `http://` gateway like the live control plane). Mutation check: allowing query strings in URLs → 1 failure |
 | Connector bundle smoke | `bash build-release.sh v9.9.9-test` + run | `version` → tag; `agents` lists adapters; unpaired `run` exits 78 with state `unpaired` |
 | Published bundles | ran `v0.6.0` and `v0.9.0` release assets | **FAILED**: both crash with `Dynamic require of "fs"` (A-1) |
 

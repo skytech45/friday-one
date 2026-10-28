@@ -73,6 +73,9 @@ valid_url() { # $1 url, $2 scheme (https|wss)
   return 1
 }
 
+# The control plane may advertise the gateway as https:// (same host, TLS); the connector needs wss://.
+ws_scheme() { case "$1" in https://*) printf 'wss://%s' "${1#https://}";; http://*) printf 'ws://%s' "${1#http://}";; *) printf '%s' "$1";; esac; }
+
 valid_token() { [[ "$1" =~ ^[A-Za-z0-9_-]{20,200}$ ]]; }
 
 valid_root() { # absolute, existing directory, not a system location
@@ -297,7 +300,7 @@ cmd_setup() {
   if ! printf '%s' "$health" | grep -q '"ok":true'; then bad "control plane not reachable at $cp/api/v1/health"; exit 1; fi
   ok "control plane reachable (TLS verified)"
   local advertised; advertised="$(printf '%s' "$health" | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write(JSON.parse(d).gateway_url||"")}catch{}})')"
-  gw="$(ask "Gateway URL" "${advertised:-$(env_get FRIDAY_GATEWAY_URL)}")"
+  gw="$(ws_scheme "$(ask "Gateway URL" "$(ws_scheme "${advertised:-$(env_get FRIDAY_GATEWAY_URL)}")")")"
   valid_url "$gw" wss || die "invalid gateway URL (must be wss://host[/path])"
 
   local roots; roots="$(ask "Project directories the agent may work in (colon-separated, must exist)" "$(env_get FRIDAY_ALLOWED_ROOTS)")"

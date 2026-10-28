@@ -44,6 +44,8 @@ wss.on("connection", (ws) => {
 });
 await new Promise((r) => wss.once("listening", r));
 const wsPort = wss.address().port;
+// The live control plane advertises its gateway as https://; FAKE_ADVERTISE_SCHEME=http mimics that locally.
+const ADVERTISE_SCHEME = process.env.FAKE_ADVERTISE_SCHEME || "ws";
 
 function readJson(req) {
   return new Promise((resolve) => {
@@ -57,7 +59,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const send = (status, body) => { res.statusCode = status; res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); };
   if (url.searchParams.has("token")) state.tokenInUrl = true; // must never happen with POST polling
-  if (url.pathname === "/api/v1/health") return send(200, { ok: true, service: "fake-control-plane", gateway_url: `ws://127.0.0.1:${wsPort}` });
+  if (url.pathname === "/api/v1/health") return send(200, { ok: true, service: "fake-control-plane", gateway_url: `${ADVERTISE_SCHEME}://127.0.0.1:${wsPort}` });
   if (url.pathname === "/api/v1/enrollments/session" && req.method === "POST") {
     const { token } = await readJson(req);
     if (token !== VALID_TOKEN || state.sessionOpened) return send(403, { error: "invalid_or_expired_token" });

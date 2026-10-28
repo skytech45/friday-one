@@ -31,7 +31,7 @@ Statuses: `VERIFIED` · `IMPLEMENTED_NOT_VERIFIED` · `PARTIAL` · `MISSING` ·
 | A-9 | P2 | Installer downloaded to fixed `/tmp/<name>` paths as root (symlink race). | private `mktemp -d`, trap cleanup | code review |
 | A-10 | P2 | No status/diagnostics; `uninstall` deleted config without asking; version always "0.1.0". | `fridayone status/doctor/logs`, guarded uninstall, tag embedded in builds | harness |
 | A-11 | fixed | Published `v0.9.0` ships the broken bundle (A-1) and old installer (A-3). | released `v0.9.1` | assets downloaded after publishing: checksums OK, bundle runs, installer and CLI pinned to `v0.9.1` |
-| A-13 | open | Live control plane advertises the gateway as `https://…`; `fridayone setup` accepts only `wss://`, so the suggested default fails. | convert `https://` → `wss://` in setup (or fix the advertised URL) | live `/api/v1/health`, 2026-10-28 |
+| A-13 | fixed on `master` (unreleased) | Live control plane advertises the gateway as `https://…`; `fridayone setup` accepts only `wss://`, so the suggested default fails. | setup converts an advertised or typed `https://`/`http://` to `wss://`/`ws://` (validation unchanged) | live `/api/v1/health`, 2026-10-28; harness: advertised and typed cases |
 | A-12 | open (known) | F-M1: issued credential held in plaintext server-side until pickup. | connector-generated credential (protocol change, not done) | — |
 
 Earlier findings F-M1…F-M19 (migration audit) are tracked in
@@ -70,7 +70,7 @@ Columns: **A** Android · **API** control plane / Firebase functions · **GW** g
 | Audit events | audit list | written in transactions | — | — | API A-8 | VERIFIED (emulator) |
 | Android error/offline states | partial (alignment plan Phase 2) | — | — | — | smoke tests | PARTIAL |
 | Connector installation + upgrades | — | — | — | `install.sh` | harness; E2E (CI) | IMPLEMENTED_NOT_VERIFIED until CI |
-| CLI setup + diagnostics | — | — | — | `fridayone` | harness 29/29 | VERIFIED (stubbed) · real systemd pending |
+| CLI setup + diagnostics | — | — | — | `fridayone` | harness 30/30 | VERIFIED (stubbed) · real systemd pending |
 | GitHub release + install docs | — | — | — | release workflow | `v0.9.1` published and checked | VERIFIED (assets); live install on a VPS not run |
 
 ## 3. Pairing and token verification (as implemented)

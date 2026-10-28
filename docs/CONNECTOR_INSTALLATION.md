@@ -86,8 +86,9 @@ The wizard:
 1. checks OS, architecture, systemd, Node.js and disk;
 2. asks for the **control plane URL** (HTTPS only) and checks `/api/v1/health`;
 3. takes the **gateway URL** advertised by the control plane (you can override it).
-   The hosted control plane currently advertises an `https://` address, which
-   setup rejects: type the same address with `wss://` instead;
+   The hosted control plane currently advertises an `https://` address. In
+   `v0.9.1` setup rejects it: type the same address with `wss://` instead.
+   Later releases convert `https://` to `wss://` automatically;
 4. asks which **project directories** the agent may work in (they must
    exist; system paths are refused) and grants write access to those only;
 5. asks for the **enrollment token**. In the app: *Add Server → Generate
