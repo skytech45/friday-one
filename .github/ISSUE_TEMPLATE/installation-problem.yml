@@ -1,0 +1,51 @@
+name: Installation problem
+description: The connector installer or `fridayone setup` failed on a VPS
+labels: [installation]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste enrollment tokens, pairing codes or the contents of `/etc/friday-connector/credential`.**
+        `fridayone doctor` output contains no secrets, but read it before pasting.
+  - type: input
+    id: version
+    attributes:
+      label: Release / installer version
+      placeholder: vX.Y.Z (from `fridayone --version`)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and architecture
+      placeholder: Ubuntu 24.04, x86_64
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where did it fail?
+      options:
+        - install.sh (download / checksum / service)
+        - fridayone setup — system checks
+        - fridayone setup — control plane / gateway URL
+        - fridayone setup — pairing (token, QR or numeric code)
+        - fridayone setup — gateway connection
+        - Agent not found
+        - Upgrade or uninstall
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `fridayone doctor`
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Last lines of `fridayone logs -n50` (redacted automatically)
+      render: text
+  - type: textarea
+    id: what
+    attributes:
+      label: What you did and what you expected

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Installation guide
+    url: https://github.com/skytech45/friday-one/blob/master/docs/CONNECTOR_INSTALLATION.md
+    about: Step-by-step connector installation and pairing
+  - name: Troubleshooting
+    url: https://github.com/skytech45/friday-one/blob/master/docs/TROUBLESHOOTING.md
+    about: Common errors and fixes

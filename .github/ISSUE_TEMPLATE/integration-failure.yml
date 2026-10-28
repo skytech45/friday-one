@@ -1,0 +1,35 @@
+name: Integration failure
+description: App, gateway, connector or agent don't work together (pairing, chat, approvals, revocation)
+labels: [integration]
+body:
+  - type: markdown
+    attributes:
+      value: "**Do not paste tokens, credentials or private prompts.** Describe them instead."
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Sign-in, Pairing, Server status, Agent chat / streaming, Cancel, Policies, Approvals, Revocation, Audit log]
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: App version and connector version
+      placeholder: app 0.9.0 (versionCode 10), connector vX.Y.Z
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      options: [OpenCode, Hermes, Not relevant]
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of `fridayone status` on the VPS
+      render: text
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce, expected and actual result
+    validations:
+      required: true

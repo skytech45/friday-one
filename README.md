@@ -1,88 +1,122 @@
 # FRIDAY One
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform: Android](https://img.shields.io/badge/Platform-Android_8.0+-green.svg)](android/)
-[![Architecture: Zero--Trust](https://img.shields.io/badge/Security-Zero--Trust_Outbound_WSS-orange.svg)](docs/SYSTEM_DESIGN.md)
+FRIDAY One lets you run AI coding agents (**OpenCode**, **Hermes**) on your
+own Linux servers and control them from an Android app: pair a VPS, send
+prompts, watch the output stream live, approve sensitive actions, set
+policies and revoke access.
 
-**FRIDAY One** is a modern, zero-trust cloud server management and autonomous AI agent platform. It connects your Android mobile device directly to your Linux cloud servers and VPS infrastructure, providing real-time AI agent interactions (powered by OpenCode and Hermes ACP runtimes) with granular human-in-the-loop permission approvals.
+```text
+ Android app ──HTTPS──▶ Control plane (auth, pairing, policies, audit)
+      │                         │
+      └──────WSS──────▶ Realtime gateway ◀──WSS (outbound only)── Connector on your VPS
+                                                                     └─ OpenCode / Hermes
+```
 
----
+- **The app** handles sign-in, pairing (QR or numeric code), servers, chat, approvals, policies and audit.
+- **The control plane** owns accounts, pairing, policies and audit records. Today it runs on Vercel + Supabase; a Firebase port is on branch `firebase/migration-phase-0`.
+- **The gateway** relays authenticated WebSocket traffic between the app and connectors.
+- **The connector** runs on your VPS as an unprivileged service. It connects out only, enforces your policies locally, and drives the agent.
 
-## ⚡ Quick Start
+## Status
 
-For full installation and setup instructions, see the **[Complete Setup Guide](docs/SETUP_GUIDE.md)**.
+Not production-ready. The current verified state, known defects and open
+gates are in [docs/FULL_SYSTEM_AUDIT.md](docs/FULL_SYSTEM_AUDIT.md) and
+[docs/PRODUCTION_READINESS_CHECKLIST.md](docs/PRODUCTION_READINESS_CHECKLIST.md).
 
-### 1. Install the Connector on your Linux VPS
+> **Install command: BLOCKED.** Release `v0.9.0` ships a connector bundle
+> that does not start and the old installer (audit A-1, A-3). The fixed
+> installer and the `fridayone` CLI are on branch `feat/fridayone-cli`. The
+> steps below apply to the first release built from it.
+
+## Supported platforms
+
+| Component | Supported |
+|---|---|
+| Android app | Android 8.0 (API 26) and later |
+| Connector | Ubuntu 22.04 / 24.04, Debian 12 · x86_64, aarch64 · systemd · Node.js ≥ 20 |
+
+## Install the connector on a VPS
+
+Download, verify and read the installer for a specific release (replace
+`vX.Y.Z` with a release from the Releases page):
+
 ```bash
-curl -fsSL https://friday-one-control-plane-cotts1-2550.vercel.app/install.sh | sudo bash
+curl -fsSLO https://github.com/skytech45/friday-one/releases/download/vX.Y.Z/install.sh
 ```
 
-### 2. Pair your Cloud Server
-On your server terminal, run:
 ```bash
-fridayone
-```
-Follow the terminal prompt to enter your pairing token from the mobile app. A terminal ASCII QR code and numeric pairing key will appear.
-
-### 3. Open the Android App
-- Log in using **Google OAuth** or **Email/Password**.
-- Go to the **Pairing Dashboard**.
-- Scan the terminal QR code or enter the numeric pairing key.
-- Your server is now connected and ready for AI agent automation!
-
----
-
-## 🚀 Key Features
-
-- **Apple Dark Minimalist Design**: Premium UI crafted with Jetpack Compose, featuring high-contrast metrics, card elevations, and fluid status indicators.
-- **Two Pairing Modes**:
-  - **Terminal QR Scanner**: Camera viewfinder powered by ZXing for instant terminal pairing.
-  - **Pair with Key**: 16–20 digit one-time code entry for headless or remote terminal workflows.
-- **Single-Command Server CLI (`fridayone`)**: Intuitive server-side onboarding and background systemd daemon management.
-- **Autonomous AI Agent Execution**: Run OpenCode and Hermes agent workflows directly on your servers with live streaming deltas.
-- **Human-in-the-Loop Security**: Interactive permission cards in the chat view allow you to approve or deny sensitive operations on the fly.
-- **Zero Inbound Ports Required**: The server connector initiates outbound-only WSS connections through the gateway, working seamlessly behind firewalls and NAT.
-- **Zero Secrets on Client**: Client devices never store server credentials, database passwords, or private keys.
-
----
-
-## 📂 Repository Structure
-
-```
-├── android/            # Native Android application (Jetpack Compose, Kotlin)
-│   └── app/            # Main application module (UI theme, CloudScreen, GatewayClient)
-├── connector/          # Cloud server daemon & CLI (`fridayone`, ACP agent adapters)
-├── control-plane/      # Vercel serverless API (Pairing state machine, auth, Supabase RPC)
-├── gateway/            # Realtime WSS hub (Port 8790, ReplayGuard, streaming deltas)
-├── docs/               # System design, API protocols, and setup documentation
-│   ├── SETUP_GUIDE.md  # Detailed step-by-step setup and pairing guide
-│   ├── SYSTEM_DESIGN.md# Architecture and threat model specification
-│   ├── PRD.md          # Product requirements document
-│   └── UI_UX_GUIDE.md  # Design system and user interaction guidelines
-└── scripts/            # Helper scripts and automation utilities
+curl -fsSLO https://github.com/skytech45/friday-one/releases/download/vX.Y.Z/install.sh.sha256
 ```
 
----
+```bash
+sha256sum -c install.sh.sha256 && less install.sh
+```
 
-## 📖 Documentation
+```bash
+sudo bash install.sh
+```
 
-- [Setup & Pairing Guide](docs/SETUP_GUIDE.md)
-- [Realtime Protocol v1](docs/REALTIME_PROTOCOL.md)
-- [Backend Implementation Details](docs/BACKEND.md)
-- [Google OAuth Setup](docs/GOOGLE_OAUTH_SETUP.md)
+Then pair it with the app:
 
----
+```bash
+sudo fridayone setup
+```
 
-## 🔒 Security & Verification
+The wizard checks the system, asks for the control plane and your project
+directories, then asks for the **enrollment token** from the app (*Add
+Server → Generate Pairing Session*). The token is read without echo. It
+shows a **QR code and a numeric code**: scan or type it in the app. It
+then waits until the gateway has **authenticated** the connector, and
+reports each stage separately.
 
-FRIDAY One employs defense-in-depth principles:
-- **Rate-limited Pairing**: Ephemeral 10-minute validity, 5-attempt brute-force budget with IP rate-limiting via Supabase RPC.
-- **File System Permissions**: Secrets stored under `/etc/friday/connector.json` with strict `0600` permissions.
-- **Process Isolation**: The connector daemon runs as a dedicated non-root user (`friday-connector`).
-- **Cryptographic Replay Protection**: Gateway enforces sequence baseline and bounded LRU deduplication on message IDs.
+Verify at any time:
 
----
+```bash
+fridayone status
+```
 
-## 📄 License
+```bash
+fridayone doctor
+```
 
-This project is licensed under the MIT License.
+Full guide: [docs/CONNECTOR_INSTALLATION.md](docs/CONNECTOR_INSTALLATION.md) ·
+Problems: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+
+## Connect OpenCode or Hermes
+
+Install the agent so the `friday-connector` account can run it (its home is
+`/var/lib/friday-connector`; model-provider keys go there).
+`fridayone doctor` shows which agents the connector can see. Pairing and the
+gateway connection don't need any model-provider key.
+
+## Security notes
+
+- The connector runs as `friday-connector`: no login, no capabilities, a
+  read-only system view, and write access only to the project
+  directories you choose. It opens **no inbound port**.
+- Downloads are pinned to a version and SHA-256-verified; the install fails closed on any mismatch.
+- The connector's only secret is its own revocable credential (0600).
+  Enrollment tokens are single-use, short-lived and never stored.
+- Every command is re-authorized by the gateway and checked against your
+  policy on the VPS right before it runs, failing closed.
+
+## Repository layout
+
+```text
+android/        Android app (Kotlin, Jetpack Compose)
+control-plane/  Control plane API (Vercel + Supabase)
+gateway/        Realtime WebSocket gateway
+connector/      VPS connector, install.sh, fridayone CLI (connector/cli/)
+infra/          Database migrations, systemd units
+docs/           Design, protocol, setup, audit and test reports
+```
+
+## Documentation
+
+- [Connector installation](docs/CONNECTOR_INSTALLATION.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Full system audit](docs/FULL_SYSTEM_AUDIT.md) · [End-to-end test report](docs/END_TO_END_TEST_REPORT.md) · [Production readiness](docs/PRODUCTION_READINESS_CHECKLIST.md)
+- [Realtime protocol](docs/REALTIME_PROTOCOL.md) · [Backend](docs/BACKEND.md) · [Deploy (legacy stack)](docs/DEPLOY.md) · [Google OAuth setup](docs/GOOGLE_OAUTH_SETUP.md)
+
+## License
+
+No license file has been added yet, so all rights are reserved by the owner.
