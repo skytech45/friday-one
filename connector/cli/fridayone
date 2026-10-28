@@ -28,7 +28,8 @@ STATE_FILE="${FRIDAY_STATE_FILE:-$R/run/friday-connector/state.json}"
 CLI_PATH="$R/usr/local/bin/fridayone"
 SERVICE="friday-connector"
 SERVICE_USER="friday-connector"
-NODE="${FRIDAY_NODE:-node}"
+# Absolute path: runuser may reset PATH for the service account.
+NODE="${FRIDAY_NODE:-$(command -v node || echo node)}"
 MIN_NODE_MAJOR=20
 EX_CONFIG=78
 

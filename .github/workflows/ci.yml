@@ -29,10 +29,35 @@ jobs:
         if: matrix.component == 'gateway' || matrix.component == 'connector' || matrix.component == 'control-plane'
         run: npm test
         working-directory: ${{ matrix.component }}
-      - name: connector bundle builds
+      - name: connector bundle builds and starts
         if: matrix.component == 'connector'
         run: bash build-release.sh 0.0.0-ci
         working-directory: connector
+      - name: fridayone CLI tests (stubbed system tools)
+        if: matrix.component == 'connector'
+        run: bash test/cli/cli-harness.sh
+        working-directory: connector
+      - name: shellcheck installer and CLI
+        if: matrix.component == 'connector'
+        run: shellcheck -S warning install.sh cli/fridayone test/e2e/installer-e2e.sh test/cli/cli-harness.sh
+        working-directory: connector
+
+  installer-e2e:
+    name: Installer + fridayone + connector on real systemd
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+        working-directory: connector
+      # Destructive to this runner's friday-connector install only; never run on a real VPS.
+      - name: install → setup → connect → drop/restart → revoke → upgrade → tamper → uninstall
+        run: sudo env "PATH=$PATH" bash connector/test/e2e/installer-e2e.sh
+      - name: connector journal on failure
+        if: failure()
+        run: sudo journalctl -u friday-connector --no-pager -n 200 || true
 
   android:
     name: Android build

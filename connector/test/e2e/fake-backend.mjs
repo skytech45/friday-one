@@ -81,6 +81,11 @@ const server = http.createServer(async (req, res) => {
     for (const ws of liveSockets) ws.close(4403, "credential_revoked");
     return send(200, { revoked: true });
   }
+  if (url.pathname === "/__control/drop" && req.method === "POST") {
+    // Simulates a gateway restart / network cut: ordinary close, connector must come back.
+    for (const ws of liveSockets) ws.close(1012, "service_restart");
+    return send(200, { dropped: true });
+  }
   if (url.pathname === "/__control/state") return send(200, { ...state, serverId: SERVER_ID, connected: liveSockets.size });
   send(404, { error: "not_found" });
 });
