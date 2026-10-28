@@ -63,6 +63,13 @@ jobs:
             cp "connector/release/friday-connector-${TAG}.js" "dist-release/${name}"
             (cd dist-release && sha256sum "${name}" > "${name}.sha256")
           done
+      - name: fridayone CLI stamped with this release
+        run: |
+          set -euo pipefail
+          sed "s/^FRIDAY_CLI_VERSION=\"dev\"/FRIDAY_CLI_VERSION=\"${TAG}\"/" connector/cli/fridayone > dist-release/fridayone
+          grep -q "^FRIDAY_CLI_VERSION=\"${TAG}\"" dist-release/fridayone || { echo "CLI version not stamped" >&2; exit 1; }
+          bash -n dist-release/fridayone
+          (cd dist-release && sha256sum fridayone > fridayone.sha256)
       - name: Installer pinned to this release
         run: |
           set -euo pipefail
@@ -188,7 +195,7 @@ jobs:
             echo '```'
           } > notes.md
           # Exactly the expected files, nothing else: fail if the set differs.
-          expected="FRIDAY-One-${TAG}-release.apk FRIDAY-One-${TAG}-release.apk.sha256 friday-connector-${TAG}-linux-arm64.js friday-connector-${TAG}-linux-arm64.js.sha256 friday-connector-${TAG}-linux-x64.js friday-connector-${TAG}-linux-x64.js.sha256 install.sh install.sh.sha256"
+          expected="FRIDAY-One-${TAG}-release.apk FRIDAY-One-${TAG}-release.apk.sha256 friday-connector-${TAG}-linux-arm64.js friday-connector-${TAG}-linux-arm64.js.sha256 friday-connector-${TAG}-linux-x64.js friday-connector-${TAG}-linux-x64.js.sha256 fridayone fridayone.sha256 install.sh install.sh.sha256"
           actual="$(cd assets && find . -mindepth 1 -printf '%P\n' | sort | tr '\n' ' ' | sed 's/ $//')"
           want="$(printf '%s\n' $expected | sort | tr '\n' ' ' | sed 's/ $//')"
           [ "$actual" = "$want" ] || { echo "::error::unexpected release assets: $actual"; exit 1; }

@@ -1,0 +1,443 @@
+#!/usr/bin/env bash
+# fridayone — set up, check and manage the FRIDAY One connector on a Linux VPS.
+#
+#   fridayone setup        interactive pairing wizard (sudo)
+#   fridayone status       real service + gateway connection state
+#   fridayone doctor       diagnostics (no secrets printed)
+#   fridayone logs [-f]    service logs, secrets redacted
+#   fridayone reconnect    restart the connector and wait for the gateway (sudo)
+#   fridayone update [vX.Y.Z]   install a verified release (sudo)
+#   fridayone uninstall [--purge] [--yes]   (sudo)
+#
+# Docs: https://github.com/skytech45/friday-one/blob/master/docs/CONNECTOR_INSTALLATION.md
+set -euo pipefail
+
+FRIDAY_CLI_VERSION="dev" # replaced with the release tag at publish time
+REPO="skytech45/friday-one"
+
+# Every system path hangs off FRIDAY_ROOT (empty in real use; a temp dir in tests).
+R="${FRIDAY_ROOT:-}"
+INSTALL_DIR="$R/opt/friday-connector"
+BUNDLE="$INSTALL_DIR/friday-connector.js"
+CONF_DIR="$R/etc/friday-connector"
+ENV_FILE="$CONF_DIR/connector.env"
+CRED_FILE="$CONF_DIR/credential"
+UNIT_FILE="$R/etc/systemd/system/friday-connector.service"
+DROPIN_DIR="$R/etc/systemd/system/friday-connector.service.d"
+STATE_FILE="${FRIDAY_STATE_FILE:-$R/run/friday-connector/state.json}"
+CLI_PATH="$R/usr/local/bin/fridayone"
+SERVICE="friday-connector"
+SERVICE_USER="friday-connector"
+NODE="${FRIDAY_NODE:-node}"
+MIN_NODE_MAJOR=20
+EX_CONFIG=78
+
+# ---------------------------------------------------------------------- output
+if [ -t 1 ]; then C_OK=$'\e[32m'; C_BAD=$'\e[31m'; C_WARN=$'\e[33m'; C_DIM=$'\e[2m'; C_OFF=$'\e[0m'; else C_OK=; C_BAD=; C_WARN=; C_DIM=; C_OFF=; fi
+ok()   { printf '  %s✔%s %s\n' "$C_OK" "$C_OFF" "$*"; }
+bad()  { printf '  %s✖%s %s\n' "$C_BAD" "$C_OFF" "$*"; }
+warn() { printf '  %s!%s %s\n' "$C_WARN" "$C_OFF" "$*"; }
+info() { printf '  %s·%s %s\n' "$C_DIM" "$C_OFF" "$*"; }
+die()  { printf '%sfridayone:%s %s\n' "$C_BAD" "$C_OFF" "$*" >&2; exit "${2:-1}"; }
+
+need_root() {
+  [ "${FRIDAY_TEST_ALLOW_NONROOT:-}" = 1 ] && return 0
+  [ "$(id -u)" -eq 0 ] || die "this command changes system files; run: sudo fridayone $1"
+}
+
+# Strip anything credential-shaped from text we print (logs, errors).
+redact() {
+  sed -E \
+    -e 's/(credential|token|authorization|password|secret)(["'"'"'=: ]+)[^ "'"'"',}]+/\1\2[redacted]/Ig' \
+    -e 's/[A-Za-z0-9_-]{32,}/[redacted]/g'
+}
+
+env_get() { [ -r "$ENV_FILE" ] && sed -n "s/^$1=//p" "$ENV_FILE" | tail -1 || true; }
+
+# JSON field from the state file, without jq (node is a dependency anyway).
+state_field() {
+  [ -r "$STATE_FILE" ] || { echo ""; return; }
+  "$NODE" -e 'try{const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const v=s[process.argv[2]];process.stdout.write(v==null?"":typeof v==="object"?JSON.stringify(v):String(v))}catch{process.stdout.write("")}' "$STATE_FILE" "$1"
+}
+
+connector_version() { [ -f "$BUNDLE" ] && "$NODE" "$BUNDLE" version 2>/dev/null || true; }
+
+# ---------------------------------------------------------------- validation
+# https:// only; http:// solely for loopback when explicitly allowed (tests).
+valid_url() { # $1 url, $2 scheme (https|wss)
+  local url="$1" scheme="$2" insecure
+  case "$scheme" in https) insecure=http;; wss) insecure=ws;; esac
+  if [[ "$url" =~ ^${scheme}://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$ ]]; then return 0; fi
+  if [ "${FRIDAY_ALLOW_INSECURE_LOCAL:-}" = 1 ] && [[ "$url" =~ ^${insecure}://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$ ]]; then return 0; fi
+  return 1
+}
+
+valid_token() { [[ "$1" =~ ^[A-Za-z0-9_-]{20,200}$ ]]; }
+
+valid_root() { # absolute, existing directory, not a system location
+  local d="$1"
+  [[ "$d" =~ ^/[A-Za-z0-9._/-]+$ ]] || return 1
+  case "$d" in /|/etc|/etc/*|/root|/root/*|/proc*|/sys*|/dev*|/boot*|/usr|/usr/*|/bin*|/sbin*|/lib*|/var/lib/friday-connector*) return 1;; esac
+  [ -d "$R$d" ]
+}
+
+# ------------------------------------------------------------- system checks
+os_check() { # prints "id version" and returns 0 if tested, 2 if untested
+  local id="" ver=""
+  if [ -r "$R/etc/os-release" ]; then
+    id="$(. "$R/etc/os-release"; echo "${ID:-}")"; ver="$(. "$R/etc/os-release"; echo "${VERSION_ID:-}")"
+  fi
+  echo "$id $ver"
+  case "$id:$ver" in ubuntu:22.04|ubuntu:24.04|debian:12) return 0;; esac
+  return 2
+}
+
+arch_ok() { case "$(uname -m)" in x86_64|aarch64|arm64) return 0;; *) return 1;; esac; }
+
+node_major() { "$NODE" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
+
+# ----------------------------------------------------------------- commands
+cmd_help() {
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+cmd_version() {
+  echo "fridayone $FRIDAY_CLI_VERSION"
+  local v; v="$(connector_version)"
+  echo "connector ${v:-not installed}"
+}
+
+# Prints a status report; exits 0 only when the gateway accepted this connector.
+cmd_status() {
+  local active enabled st since server err code ver
+  active="$(systemctl is-active "$SERVICE" 2>/dev/null || true)"
+  enabled="$(systemctl is-enabled "$SERVICE" 2>/dev/null || true)"
+  st="$(state_field state)"; since="$(state_field since)"; server="$(state_field serverId)"
+  err="$(state_field lastError | redact)"; code="$(state_field lastCloseCode)"; ver="$(connector_version)"
+  echo "FRIDAY Connector ${ver:-(not installed)}"
+  echo "  service:  ${active:-unknown} (${enabled:-unknown})"
+  if [ ! -f "$CRED_FILE" ] && [ "$st" != "connected" ]; then
+    echo "  pairing:  not paired — run: sudo fridayone setup"
+  fi
+  if [ "$active" != "active" ]; then
+    echo "  gateway:  not connected (service ${active:-unknown})"
+    [ -n "$st" ] && echo "  last state: $st${code:+ (close $code)}${err:+ — $err}"
+    return 1
+  fi
+  case "$st" in
+    connected)  echo "  gateway:  connected as server ${server} (since ${since})"; return 0 ;;
+    revoked)    echo "  gateway:  REFUSED — this server was revoked or its credential expired${code:+ (close $code)}. Re-pair: sudo fridayone setup"; return 1 ;;
+    unpaired)   echo "  gateway:  not paired — run: sudo fridayone setup"; return 1 ;;
+    "")         echo "  gateway:  unknown (no state file yet: $STATE_FILE)"; return 1 ;;
+    *)          echo "  gateway:  $st${code:+ (last close $code)}${err:+ — $err}"; return 1 ;;
+  esac
+}
+
+cmd_logs() {
+  local follow=() lines=200
+  for a in "$@"; do case "$a" in -f|--follow) follow=(--follow);; -n*) lines="${a#-n}";; esac; done
+  journalctl -u "$SERVICE" -n "$lines" --no-pager -o short-iso "${follow[@]}" 2>&1 | redact
+}
+
+# ---------------------------------------------------------------- doctor
+doctor_result=0
+d_ok()   { ok "$*"; }
+d_warn() { warn "$*"; }
+d_fail() { bad "$*"; doctor_result=1; }
+
+host_of() { printf '%s' "$1" | sed -E 's#^[a-z]+://([^/:]+).*#\1#'; }
+
+cmd_doctor() {
+  echo "FRIDAY One doctor — no credentials are printed"
+  local osinfo rc=0; osinfo="$(os_check)" || rc=$?
+  if [ "$rc" = 0 ]; then d_ok "OS: $osinfo (tested)"; else d_warn "OS: ${osinfo:-unknown} is not a tested distribution (Ubuntu 22.04/24.04, Debian 12)"; fi
+  if arch_ok; then d_ok "architecture: $(uname -m)"; else d_fail "architecture $(uname -m) is not supported (x86_64, aarch64)"; fi
+  local nm; nm="$(node_major)"
+  if [ "$nm" -ge "$MIN_NODE_MAJOR" ] 2>/dev/null; then d_ok "Node.js $("$NODE" -v)"; else d_fail "Node.js >= $MIN_NODE_MAJOR required (found: ${nm:-none})"; fi
+
+  local ver; ver="$(connector_version)"
+  if [ -n "$ver" ]; then d_ok "connector $ver at $BUNDLE"; else d_fail "connector bundle missing or does not start: $BUNDLE"; fi
+  if [ -f "$INSTALL_DIR/friday-connector.js.sha256" ] && [ -f "$BUNDLE" ]; then
+    if (cd "$INSTALL_DIR" && sha256sum -c --status friday-connector.js.sha256); then d_ok "bundle checksum matches the installed release"; else d_fail "bundle checksum mismatch (modified?) — reinstall: sudo fridayone update"; fi
+  fi
+
+  if [ -f "$ENV_FILE" ]; then d_ok "config: $ENV_FILE"; else d_fail "config missing: $ENV_FILE — run: sudo fridayone setup"; fi
+  if [ -f "$CRED_FILE" ]; then
+    local mode owner; mode="$(stat -c %a "$CRED_FILE" 2>/dev/null || echo ?)"; owner="$(stat -c %U "$CRED_FILE" 2>/dev/null || echo ?)"
+    if [ "$mode" = 600 ] && [ "$owner" = "$SERVICE_USER" ]; then d_ok "credential present (0600, $owner)"; else d_fail "credential permissions are $mode owned by $owner (want 600, $SERVICE_USER)"; fi
+  else
+    d_warn "not paired yet (no credential) — run: sudo fridayone setup"
+  fi
+
+  if [ -f "$UNIT_FILE" ]; then d_ok "systemd unit installed"; else d_fail "systemd unit missing: $UNIT_FILE"; fi
+  local active; active="$(systemctl is-active "$SERVICE" 2>/dev/null || true)"
+  if [ "$active" = active ]; then d_ok "service active"; else d_fail "service ${active:-unknown} — see: fridayone logs"; fi
+
+  local cp gw; cp="$(env_get FRIDAY_CONTROL_PLANE_URL)"; gw="$(env_get FRIDAY_GATEWAY_URL)"
+  for pair in "control plane|$cp" "gateway|$gw"; do
+    local name="${pair%%|*}" url="${pair#*|}" host
+    [ -n "$url" ] || { d_fail "$name URL not configured"; continue; }
+    host="$(host_of "$url")"
+    if [[ "$host" =~ ^(127\.0\.0\.1|localhost)$ ]] || getent hosts "$host" >/dev/null 2>&1; then d_ok "$name DNS: $host resolves"; else d_fail "$name DNS: cannot resolve $host"; fi
+  done
+  if [ -n "$cp" ]; then
+    if curl -fsS --max-time 10 "$cp/api/v1/health" -o /dev/null 2>/dev/null; then d_ok "control plane HTTPS reachable (TLS verified)"; else d_fail "control plane $cp/api/v1/health unreachable or TLS invalid"; fi
+  fi
+  if [ -n "$gw" ]; then
+    local probe; probe="$(printf '%s' "$gw" | sed -E 's#^wss://#https://#; s#^ws://#http://#')"
+    # Any HTTP answer proves DNS + TCP + TLS; it does NOT prove we are authenticated (see below).
+    if curl -sS --max-time 10 -o /dev/null "$probe" 2>/dev/null; then d_ok "gateway TLS endpoint reachable"; else d_fail "gateway $gw unreachable or TLS invalid"; fi
+  fi
+
+  local st code; st="$(state_field state)"; code="$(state_field lastCloseCode)"
+  case "$st" in
+    connected) d_ok "gateway authenticated this connector (server $(state_field serverId))" ;;
+    revoked)   d_fail "gateway refused this connector (revoked/expired${code:+, close $code}) — re-pair: sudo fridayone setup" ;;
+    unpaired)  d_fail "connector is not paired — run: sudo fridayone setup" ;;
+    "")        d_warn "no connection state yet ($STATE_FILE)" ;;
+    *)         d_fail "gateway not connected: $st${code:+ (close $code)} $(state_field lastError | redact)" ;;
+  esac
+
+  local errors; errors="$(journalctl -u "$SERVICE" -n 200 --no-pager 2>/dev/null | grep -iE 'error|refused|failed|reconnect in' | tail -5 | redact || true)"
+  if [ -n "$errors" ]; then d_warn "recent connection messages:"; printf '%s\n' "$errors" | sed 's/^/      /'; fi
+
+  if [ -n "$ver" ]; then
+    local agents; agents="$(HOME="$R/var/lib/friday-connector" "$NODE" "$BUNDLE" agents 2>/dev/null || true)"
+    if printf '%s' "$agents" | grep -q "found ("; then d_ok "agents:"; else d_warn "no agent found (install OpenCode or Hermes for the $SERVICE_USER user):"; fi
+    printf '%s\n' "$agents" | sed 's/^/      /'
+  fi
+  return "$doctor_result"
+}
+
+# ------------------------------------------------------------------- setup
+ask() { # $1 prompt, $2 default → echoes answer
+  local reply
+  if [ -n "${2:-}" ]; then printf '  %s [%s]: ' "$1" "$2" >&2; else printf '  %s: ' "$1" >&2; fi
+  IFS= read -r reply || true
+  printf '%s' "${reply:-${2:-}}"
+}
+
+write_env() { # atomic, with a backup of the previous file
+  local cp="$1" gw="$2" roots="$3" tmp
+  tmp="$(mktemp "$CONF_DIR/.connector.env.XXXXXX")"
+  {
+    echo "# FRIDAY Connector configuration (written by fridayone setup $(date -u +%FT%TZ))."
+    echo "# Contains no secrets: the credential is in $CRED_FILE (0600)."
+    echo "FRIDAY_CONTROL_PLANE_URL=$cp"
+    echo "FRIDAY_GATEWAY_URL=$gw"
+    echo "FRIDAY_CREDENTIAL_FILE=/etc/friday-connector/credential"
+    echo "FRIDAY_POLICY_DIR=/etc/friday-connector/policies"
+    echo "FRIDAY_ALLOWED_ROOTS=$roots"
+  } > "$tmp"
+  chmod 0640 "$tmp"
+  chown "root:$SERVICE_USER" "$tmp" 2>/dev/null || true
+  if [ -f "$ENV_FILE" ]; then cp -p "$ENV_FILE" "$ENV_FILE.bak.$(date +%Y%m%d%H%M%S)"; fi
+  mv -f "$tmp" "$ENV_FILE"
+}
+
+write_roots_dropin() { # writable project roots for the sandboxed service
+  local roots="$1" paths=""
+  mkdir -p "$DROPIN_DIR"
+  IFS=: read -ra list <<< "$roots"
+  for d in "${list[@]}"; do [ -n "$d" ] && paths+=" $d"; done
+  {
+    echo "# Written by fridayone setup: project roots the connector may modify."
+    echo "[Service]"
+    [ -n "$paths" ] && echo "ReadWritePaths=$paths"
+  } > "$DROPIN_DIR/10-project-roots.conf"
+}
+
+wait_for_state() { # $1 wanted state, $2 timeout seconds
+  local i st
+  for ((i = 0; i < $2; i++)); do
+    st="$(state_field state)"
+    [ "$st" = "$1" ] && return 0
+    [ "$st" = revoked ] && return 2
+    sleep 1
+  done
+  return 1
+}
+
+cmd_setup() {
+  need_root setup
+  echo "FRIDAY One connector setup"
+  echo
+  # Stage results for the final report (never one generic "success").
+  local s_pkg=fail s_cfg=fail s_pair=fail s_auth=fail s_conn=fail s_agent=fail
+
+  echo "1. System checks"
+  local osinfo rc=0; osinfo="$(os_check)" || rc=$?
+  if [ "$rc" = 0 ]; then ok "OS: $osinfo"
+  elif [ "${FRIDAY_ALLOW_UNTESTED_OS:-}" = 1 ]; then warn "OS: ${osinfo:-unknown} is untested (FRIDAY_ALLOW_UNTESTED_OS=1)"
+  else bad "OS: ${osinfo:-unknown} is not a tested distribution (Ubuntu 22.04/24.04, Debian 12). Set FRIDAY_ALLOW_UNTESTED_OS=1 to try anyway."; exit 1; fi
+  arch_ok && ok "architecture: $(uname -m)" || { bad "architecture $(uname -m) not supported"; exit 1; }
+  command -v systemctl >/dev/null || { bad "systemd is required"; exit 1; }
+  local nm; nm="$(node_major)"
+  [ "$nm" -ge "$MIN_NODE_MAJOR" ] 2>/dev/null && ok "Node.js $("$NODE" -v)" || { bad "Node.js >= $MIN_NODE_MAJOR required (install it from https://nodejs.org or your distribution, then re-run)"; exit 1; }
+  local free_mb; free_mb="$(df -Pm "$INSTALL_DIR" 2>/dev/null | awk 'NR==2{print $4}')"
+  [ "${free_mb:-0}" -ge 100 ] && ok "disk: ${free_mb} MB free" || warn "disk: only ${free_mb:-?} MB free on $INSTALL_DIR"
+  local ver; ver="$(connector_version)"
+  if [ -n "$ver" ] && id -u "$SERVICE_USER" >/dev/null 2>&1 && [ -f "$UNIT_FILE" ]; then ok "connector $ver installed"; s_pkg=ok
+  else bad "connector is not installed — run the installer first (docs/CONNECTOR_INSTALLATION.md)"; exit 1; fi
+
+  if [ -f "$CRED_FILE" ]; then
+    echo
+    warn "This VPS is already paired$( [ -n "$(state_field serverId)" ] && echo " as server $(state_field serverId)")."
+    local again; again="$(ask "Pair again with a new enrollment token? Revoke the old server in the app afterwards. [y/N]" "N")"
+    if [[ ! "$again" =~ ^[Yy]$ ]]; then info "keeping the existing pairing"; s_cfg=ok; s_pair=ok; fi
+  fi
+
+  echo
+  echo "2. FRIDAY One backend"
+  local cp gw health
+  cp="$(ask "Control plane URL" "$(env_get FRIDAY_CONTROL_PLANE_URL)")"
+  valid_url "$cp" https || die "invalid control plane URL (must be https://host[/path])"
+  health="$(curl -fsS --max-time 15 "$cp/api/v1/health" 2>/dev/null || true)"
+  if ! printf '%s' "$health" | grep -q '"ok":true'; then bad "control plane not reachable at $cp/api/v1/health"; exit 1; fi
+  ok "control plane reachable (TLS verified)"
+  local advertised; advertised="$(printf '%s' "$health" | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write(JSON.parse(d).gateway_url||"")}catch{}})')"
+  gw="$(ask "Gateway URL" "${advertised:-$(env_get FRIDAY_GATEWAY_URL)}")"
+  valid_url "$gw" wss || die "invalid gateway URL (must be wss://host[/path])"
+
+  local roots; roots="$(ask "Project directories the agent may work in (colon-separated, must exist)" "$(env_get FRIDAY_ALLOWED_ROOTS)")"
+  if [ -n "$roots" ]; then
+    IFS=: read -ra list <<< "$roots"
+    for d in "${list[@]}"; do valid_root "$d" || die "not an allowed project directory: $d (must exist; system paths are refused)"; done
+  else
+    warn "no project directory: the agent will be refused for every request until you add one"
+  fi
+  write_env "$cp" "$gw" "$roots"; write_roots_dropin "$roots"; systemctl daemon-reload
+  ok "configuration saved to $ENV_FILE"; s_cfg=ok
+
+  if [ "$s_pair" != ok ]; then
+    echo
+    echo "3. Pair with the FRIDAY One app"
+    info "In the app: Add Server → Generate Pairing Session, then copy the enrollment token."
+    info "The token is read without echo and is never written to disk or shell history."
+    local token=""
+    printf '  Enrollment token: ' >&2
+    IFS= read -rs token || true
+    echo >&2
+    valid_token "$token" || die "that does not look like an enrollment token (copy it again from the app)"
+    # The connector shows a QR + numeric code to scan/type in the app, then
+    # waits for the claim. It runs as the service user so the credential is
+    # created 0600 for that account. The token travels ONLY in the
+    # environment (readable by that user and root), never in any argv:
+    # runuser passes the environment through.
+    if FRIDAY_ENROLLMENT_TOKEN="$token" FRIDAY_CONTROL_PLANE_URL="$cp" \
+        FRIDAY_CREDENTIAL_FILE="$CRED_FILE" \
+        runuser -u "$SERVICE_USER" -- "$NODE" "$BUNDLE" enroll; then
+      token=""; ok "paired: credential stored in $CRED_FILE (0600)"; s_pair=ok
+    else
+      token=""; bad "pairing failed (expired or reused token, or the code was not claimed in time)"; exit 1
+    fi
+  fi
+
+  echo
+  echo "4. Connect to the gateway"
+  rm -f "$STATE_FILE"
+  systemctl enable "$SERVICE" >/dev/null 2>&1 || true
+  systemctl restart "$SERVICE"
+  local wr=0; wait_for_state connected "${FRIDAY_CONNECT_TIMEOUT:-60}" || wr=$?
+  if [ "$wr" = 0 ]; then
+    ok "gateway authenticated this connector"; s_auth=ok
+    ok "connected as server $(state_field serverId)"; s_conn=ok
+  elif [ "$wr" = 2 ]; then
+    bad "gateway refused the credential (revoked or expired) — pair again"
+  else
+    bad "no gateway connection yet (state: $(state_field state) $(state_field lastError | redact)) — run: fridayone doctor"
+  fi
+
+  echo
+  echo "5. Agents"
+  local agents; agents="$(HOME="$R/var/lib/friday-connector" "$NODE" "$BUNDLE" agents 2>/dev/null || true)"
+  printf '%s\n' "$agents" | sed 's/^/    /'
+  if printf '%s' "$agents" | grep -q "found ("; then ok "at least one agent is available"; s_agent=ok
+  else warn "no agent found: install OpenCode or Hermes for the $SERVICE_USER user (see docs/CONNECTOR_INSTALLATION.md §10)"; fi
+
+  echo
+  echo "Setup report"
+  local row; for row in "Package installed:$s_pkg" "Configuration saved:$s_cfg" "Pairing successful:$s_pair" \
+      "Gateway authenticated:$s_auth" "Gateway connected:$s_conn" "Agent available:$s_agent"; do
+    if [ "${row##*:}" = ok ]; then ok "${row%:*}"; else bad "${row%:*}"; fi
+  done
+  info "End-to-end command test: not run here — send a test prompt from the app (docs/CONNECTOR_INSTALLATION.md §11)"
+  [ "$s_conn" = ok ] || exit 1
+}
+
+# --------------------------------------------------------------- reconnect
+cmd_reconnect() {
+  need_root reconnect
+  [ -f "$CRED_FILE" ] || die "not paired — run: sudo fridayone setup"
+  rm -f "$STATE_FILE"
+  systemctl restart "$SERVICE"
+  local wr=0; wait_for_state connected "${FRIDAY_CONNECT_TIMEOUT:-60}" || wr=$?
+  case "$wr" in
+    0) ok "connected as server $(state_field serverId)";;
+    2) die "gateway refused the credential (revoked or expired) — re-pair: sudo fridayone setup" "$EX_CONFIG";;
+    *) die "not connected within ${FRIDAY_CONNECT_TIMEOUT:-60}s — run: fridayone doctor";;
+  esac
+}
+
+# ------------------------------------------------------------ update/remove
+cmd_update() {
+  need_root update
+  local tag="${1:-}"
+  if [ -z "$tag" ]; then
+    tag="$(curl -fsS --max-time 15 "https://api.github.com/repos/$REPO/releases/latest" | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write(JSON.parse(d).tag_name||"")}catch{}})')"
+    [ -n "$tag" ] || die "could not determine the latest release; pass a version: sudo fridayone update vX.Y.Z"
+  fi
+  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid version: $tag"
+  local base="${FRIDAY_RELEASE_BASE_URL:-https://github.com/$REPO/releases/download}/$tag"
+  ( # subshell: the temp dir is removed on every exit path
+    work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+    info "downloading installer $tag"
+    curl -fsSL --max-time 60 -o "$work/install.sh" "$base/install.sh" || die "download failed: $base/install.sh"
+    curl -fsSL --max-time 60 -o "$work/install.sh.sha256" "$base/install.sh.sha256" || die "download failed: install.sh.sha256"
+    (cd "$work" && sha256sum -c --status install.sh.sha256) || die "installer checksum mismatch — aborting"
+    FRIDAY_CONNECTOR_VERSION="$tag" bash "$work/install.sh" upgrade
+  )
+}
+
+cmd_uninstall() {
+  need_root uninstall
+  local purge=0 yes=0
+  for a in "$@"; do case "$a" in --purge) purge=1;; --yes|-y) yes=1;; esac; done
+  if [ "$yes" != 1 ]; then
+    local c; c="$(ask "Remove the FRIDAY connector$([ "$purge" = 1 ] && echo ", its configuration, credential and service user")? [y/N]" "N")"
+    [[ "$c" =~ ^[Yy]$ ]] || { info "nothing removed"; return 0; }
+  fi
+  systemctl disable --now "$SERVICE" >/dev/null 2>&1 || true
+  rm -f "$UNIT_FILE"; rm -rf "$DROPIN_DIR"
+  systemctl daemon-reload || true
+  rm -rf "$INSTALL_DIR"
+  ok "service and connector removed"
+  if [ "$purge" = 1 ]; then
+    rm -rf "$CONF_DIR" "$R/var/lib/friday-connector"
+    userdel "$SERVICE_USER" >/dev/null 2>&1 || true
+    ok "configuration, credential and service user removed"
+  else
+    info "kept $CONF_DIR (credential + config); remove with: sudo fridayone uninstall --purge"
+  fi
+  rm -f "$CLI_PATH"
+  warn "also revoke this server in the FRIDAY One app (Security → Revoke) so its credential is dead server-side"
+}
+
+# ------------------------------------------------------------------- main
+main() {
+  local cmd="${1:-help}"; shift || true
+  case "$cmd" in
+    -h|--help|help) cmd_help ;;
+    -V|--version|version) cmd_version ;;
+    setup) cmd_setup "$@" ;;
+    status) cmd_status "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    logs) cmd_logs "$@" ;;
+    reconnect) cmd_reconnect "$@" ;;
+    update) cmd_update "$@" ;;
+    uninstall) cmd_uninstall "$@" ;;
+    *) echo "unknown command: $cmd" >&2; cmd_help >&2; exit 2 ;;
+  esac
+}
+
+main "$@"

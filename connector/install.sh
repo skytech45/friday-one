@@ -1,137 +1,203 @@
 #!/usr/bin/env bash
-# FRIDAY Connector installer (plan v2.0 §3).
-# Pinned, checksum-verified install. sudo is required ONLY to create the
-# service user and systemd unit — the connector itself never runs as root.
+# FRIDAY Connector installer.
 #
-# Usage:
-#   install.sh enroll            # interactive enrollment (prints QR/code)
-#   install.sh status|upgrade|rollback|revoke|uninstall
+# Installs a pinned, checksum-verified connector release and the `fridayone`
+# CLI, creates the unprivileged service account and a hardened systemd unit.
+# It does NOT pair: run `sudo fridayone setup` afterwards.
+#
+#   sudo bash install.sh            install (or repair) this pinned version
+#   sudo bash install.sh upgrade    replace binaries, keep config, restart if running
+#   sudo bash install.sh uninstall  hand over to `fridayone uninstall`
+#
+# Review before running: curl -fsSL <release>/install.sh -o install.sh && less install.sh
+# Docs: https://github.com/skytech45/friday-one/blob/master/docs/CONNECTOR_INSTALLATION.md
 set -euo pipefail
 
 REPO="skytech45/friday-one"
-VERSION="${FRIDAY_CONNECTOR_VERSION:-v0.3.0}"   # PINNED — never "latest" unverified
+VERSION="${FRIDAY_CONNECTOR_VERSION:-v0.3.0}"   # PINNED by the release workflow — never "latest" unverified
+DEFAULT_CONTROL_PLANE_URL="https://friday-one-control-plane-cotts1-2550.vercel.app"
+# Test hook only: a local mirror of the release assets. Real installs use GitHub releases.
+BASE_URL="${FRIDAY_RELEASE_BASE_URL:-https://github.com/$REPO/releases/download}/$VERSION"
+
 INSTALL_DIR="/opt/friday-connector"
+BUNDLE="$INSTALL_DIR/friday-connector.js"
+CONF_DIR="/etc/friday-connector"
+ENV_FILE="$CONF_DIR/connector.env"
+UNIT_FILE="/etc/systemd/system/friday-connector.service"
+CLI_PATH="/usr/local/bin/fridayone"
+SERVICE="friday-connector"
 SERVICE_USER="friday-connector"
-BIN="$INSTALL_DIR/friday-connector.js"
-ENVF="$INSTALL_DIR/connector.env"
+STATE_HOME="/var/lib/friday-connector"
+MIN_NODE_MAJOR=20
 
-need_root() { [ "$(id -u)" -eq 0 ] || { echo "run with sudo (creates the service user + unit only)" >&2; exit 1; }; }
+say()  { printf '%s\n' "$*"; }
+fail() { printf 'install.sh: %s\n' "$*" >&2; exit "${2:-1}"; }
 
-download_and_verify() {
-  need_root
-  local arch; arch="$(uname -m)"; case "$arch" in x86_64) arch="x64";; aarch64|arm64) arch="arm64";; *) echo "unsupported arch: $arch" >&2; exit 1;; esac
-  local name="friday-connector-${VERSION}-linux-${arch}.js"
-  local url="https://github.com/$REPO/releases/download/$VERSION/$name"
-  echo "downloading $url"
-  curl -fsSL -o "/tmp/$name" "$url"
-  curl -fsSL -o "/tmp/$name.sha256" "$url.sha256"
-  ( cd /tmp && sha256sum -c "$name.sha256" ) || { echo "CHECKSUM MISMATCH — aborting (tampered or wrong version)" >&2; exit 1; }
-  install -m 0755 "/tmp/$name" "$BIN"
-  rm -f "/tmp/$name" "/tmp/$name.sha256"
+WORK=""
+cleanup() { [ -n "$WORK" ] && rm -rf "$WORK"; }
+trap cleanup EXIT
+trap 'fail "interrupted; nothing half-installed was left in place" 130' INT TERM
+
+preflight() {
+  [ "$(id -u)" -eq 0 ] || fail "run as root: sudo bash install.sh"
+  [ "$(uname -s)" = Linux ] || fail "only Linux is supported"
+  command -v systemctl >/dev/null && [ -d /run/systemd/system ] || fail "systemd is required"
+  case "$(uname -m)" in
+    x86_64) ARCH=x64;; aarch64|arm64) ARCH=arm64;;
+    *) fail "unsupported architecture: $(uname -m) (supported: x86_64, aarch64)";;
+  esac
+  local id="" ver=""
+  if [ -r /etc/os-release ]; then id="$(. /etc/os-release; echo "${ID:-}")"; ver="$(. /etc/os-release; echo "${VERSION_ID:-}")"; fi
+  case "$id:$ver" in
+    ubuntu:22.04|ubuntu:24.04|debian:12) ;;
+    *) [ "${FRIDAY_ALLOW_UNTESTED_OS:-}" = 1 ] || fail "untested OS '$id $ver' (tested: Ubuntu 22.04/24.04, Debian 12); set FRIDAY_ALLOW_UNTESTED_OS=1 to try anyway";;
+  esac
+  for tool in curl sha256sum useradd install mktemp; do command -v "$tool" >/dev/null || fail "missing required tool: $tool"; done
+  NODE_BIN="$(command -v node || true)"
+  [ -n "$NODE_BIN" ] || fail "Node.js >= $MIN_NODE_MAJOR is required and was not found. Install it from https://nodejs.org (or your distribution), then re-run. This installer does not add package repositories."
+  local major; major="$("$NODE_BIN" -p 'process.versions.node.split(".")[0]')"
+  [ "$major" -ge "$MIN_NODE_MAJOR" ] || fail "Node.js >= $MIN_NODE_MAJOR required (found $("$NODE_BIN" -v))"
+  [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid version pin: $VERSION"
 }
 
-create_service() {
-  need_root
-  id -u "$SERVICE_USER" >/dev/null 2>&1 || useradd -r -M -d /var/lib/friday-connector -s /usr/sbin/nologin "$SERVICE_USER"
-  mkdir -p /etc/friday-connector "$INSTALL_DIR"
-  chmod 0750 /etc/friday-connector "$INSTALL_DIR"
-  cat > "$ENVF" <<'EOF'
-# FRIDAY Connector environment — fill GATEWAY/CONTROL_PLANE before starting.
-FRIDAY_CONTROL_PLANE_URL=https://friday-one-control-plane-cotts1-2550.vercel.app
-FRIDAY_GATEWAY_URL=wss://rugs-ada-legislature-literacy.trycloudflare.com
-FRIDAY_CREDENTIAL_FILE=/etc/friday-connector/credential
-FRIDAY_POLICY_DIR=/etc/friday-connector/policies
+fetch_verified() { # $1 asset name → $WORK/$1, checksum-verified (fail closed)
+  local name="$1"
+  curl -fsSL --proto '=https,http' --max-time 120 -o "$WORK/$name" "$BASE_URL/$name" || fail "download failed: $BASE_URL/$name"
+  curl -fsSL --proto '=https,http' --max-time 60 -o "$WORK/$name.sha256" "$BASE_URL/$name.sha256" || fail "download failed: $BASE_URL/$name.sha256"
+  (cd "$WORK" && sha256sum -c --status "$name.sha256") || fail "CHECKSUM MISMATCH for $name — aborting (tampered download or wrong version)"
+}
+
+download() {
+  WORK="$(mktemp -d)"
+  say "downloading connector $VERSION ($ARCH) and fridayone CLI"
+  fetch_verified "friday-connector-$VERSION-linux-$ARCH.js"
+  fetch_verified "fridayone"
+  "$NODE_BIN" "$WORK/friday-connector-$VERSION-linux-$ARCH.js" version >/dev/null 2>&1 \
+    || fail "the downloaded connector does not start on this system (Node.js $("$NODE_BIN" -v))"
+  say "checksums verified"
+}
+
+ensure_user() {
+  if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+    useradd --system --no-create-home --home-dir "$STATE_HOME" --shell /usr/sbin/nologin "$SERVICE_USER"
+    say "created service account $SERVICE_USER (no login, no sudo)"
+  fi
+}
+
+install_files() {
+  install -d -m 0755 "$INSTALL_DIR"
+  # Replace atomically: never leave a half-written binary in place.
+  install -m 0755 "$WORK/friday-connector-$VERSION-linux-$ARCH.js" "$BUNDLE.new"
+  mv -f "$BUNDLE.new" "$BUNDLE"
+  (cd "$INSTALL_DIR" && sha256sum friday-connector.js > friday-connector.js.sha256)
+  echo "$VERSION" > "$INSTALL_DIR/VERSION"
+  install -m 0755 "$WORK/fridayone" "$CLI_PATH.new"
+  mv -f "$CLI_PATH.new" "$CLI_PATH"
+
+  install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$CONF_DIR" "$CONF_DIR/policies"
+  if [ ! -f "$ENV_FILE" ]; then
+    # Defaults only; `fridayone setup` asks and validates. Never overwritten here.
+    umask 027
+    cat > "$ENV_FILE" <<EOF
+# FRIDAY Connector configuration. Edit with: sudo fridayone setup
+FRIDAY_CONTROL_PLANE_URL=$DEFAULT_CONTROL_PLANE_URL
+FRIDAY_GATEWAY_URL=
+FRIDAY_CREDENTIAL_FILE=$CONF_DIR/credential
+FRIDAY_POLICY_DIR=$CONF_DIR/policies
+FRIDAY_ALLOWED_ROOTS=
 EOF
-  mkdir -p /etc/friday-connector/policies
-  cat > /etc/friday-connector/policies/policies.json <<'EOF'
-{"version": 1, "rules": []}
-EOF
-  chown -R "$SERVICE_USER:$SERVICE_USER" /etc/friday-connector
-  cat > /etc/systemd/system/friday-connector.service <<EOF
+    chown "root:$SERVICE_USER" "$ENV_FILE"; chmod 0640 "$ENV_FILE"
+  fi
+}
+
+write_unit() {
+  cat > "$UNIT_FILE.new" <<EOF
+# Installed by FRIDAY One install.sh $VERSION. Local changes belong in
+# $UNIT_FILE.d/ (fridayone setup writes project roots there).
 [Unit]
-Description=FRIDAY Connector (outbound WSS execution gate)
+Description=FRIDAY One connector (outbound-only gateway client)
+Documentation=https://github.com/$REPO/blob/master/docs/CONNECTOR_INSTALLATION.md
 After=network-online.target
 Wants=network-online.target
+# A connector that keeps failing stops after 5 tries in 10 min instead of looping.
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
+Type=simple
 User=$SERVICE_USER
-EnvironmentFile=$ENVF
-ExecStart=$(command -v node) $BIN run
+Group=$SERVICE_USER
+EnvironmentFile=$ENV_FILE
+Environment=HOME=$STATE_HOME
+Environment=FRIDAY_STATE_FILE=/run/friday-connector/state.json
+ExecStart=$NODE_BIN $BUNDLE run
 Restart=on-failure
-RestartSec=5
+RestartSec=10
+# 78 = not paired / revoked: restarting cannot help.
+RestartPreventExitStatus=78
+TimeoutStopSec=20
+KillMode=mixed
+RuntimeDirectory=friday-connector
+RuntimeDirectoryMode=0755
+# Keep the last state (e.g. "revoked") readable for fridayone status after a stop.
+RuntimeDirectoryPreserve=yes
+StateDirectory=friday-connector
+StateDirectoryMode=0700
+UMask=0077
+
+# Hardening: no inbound listener exists; the service needs no privileges.
 NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
-ReadWritePaths=/etc/friday-connector
 ProtectHome=read-only
-MemoryMax=512M
+ReadWritePaths=$CONF_DIR
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+MemoryMax=1G
+TasksMax=256
 
 [Install]
 WantedBy=multi-user.target
 EOF
-  cat > /usr/local/bin/fridayone <<'EOF'
-#!/usr/bin/env bash
-# FRIDAY One server terminal pairing & management tool
-set -euo pipefail
-if [ -f /etc/friday-connector/credential ] && [ "${1:-}" != "enroll" ] && [ "${1:-}" != "pair" ]; then
-  systemctl status friday-connector --no-pager
-  echo ""
-  echo "FRIDAY Connector is installed and active."
-  echo "To re-pair with a new enrollment token, run: fridayone pair"
-  exit 0
-fi
-
-sudo /opt/friday-connector/install.sh enroll "${1:-}"
-EOF
-  chmod 0755 /usr/local/bin/fridayone
+  mv -f "$UNIT_FILE.new" "$UNIT_FILE"
   systemctl daemon-reload
 }
 
+do_install() {
+  preflight; download; ensure_user; install_files; write_unit
+  if [ -f "$CONF_DIR/credential" ]; then
+    systemctl restart "$SERVICE"
+    say "connector $VERSION installed; existing pairing kept and service restarted"
+    say "check it: fridayone status"
+  else
+    say "connector $VERSION installed (not started: not paired yet)"
+    say "next: sudo fridayone setup"
+  fi
+}
+
+do_upgrade() {
+  preflight; download; ensure_user
+  local was_active; was_active="$(systemctl is-active "$SERVICE" 2>/dev/null || true)"
+  install_files; write_unit
+  if [ "$was_active" = active ]; then systemctl restart "$SERVICE"; say "upgraded to $VERSION and restarted"; else say "upgraded to $VERSION (service was not running)"; fi
+}
+
 case "${1:-install}" in
-  install)
-    need_root
-    if [ ! -f "$BIN" ]; then download_and_verify; create_service; fi
-    echo "=========================================================="
-    echo "  FRIDAY Connector framework installed successfully."
-    echo "  Type 'fridayone' on this terminal to start pairing!"
-    echo "=========================================================="
-    ;;
-  pair|enroll)
-    need_root
-    if [ ! -f "$BIN" ]; then download_and_verify; create_service; fi
-    TOKEN="${2:-}"
-    if [ -z "$TOKEN" ]; then
-      echo "=========================================================="
-      echo "  FRIDAY One Server Pairing"
-      echo "=========================================================="
-      echo "Enter the one-time enrollment token from your FRIDAY One app:"
-      read -r TOKEN
-    fi
-    # Enrollment runs as the service user; the credential lands 0600.
-    sudo -u "$SERVICE_USER" env FRIDAY_CONTROL_PLANE_URL="$(grep FRIDAY_CONTROL_PLANE_URL "$ENVF" | cut -d= -f2)" \
-      FRIDAY_CREDENTIAL_FILE=/etc/friday-connector/credential \
-      node "$BIN" enroll "$TOKEN"
-    systemctl enable --now friday-connector
-    echo "=========================================================="
-    echo "  Connector paired & service running in background ✓"
-    echo "=========================================================="
-    ;;
-  status)    systemctl status friday-connector --no-pager ;;
-  upgrade)   need_root; download_and_verify; systemctl restart friday-connector; echo "upgraded to $VERSION" ;;
-  rollback)  need_root; VERSION="${2:?version to roll back to}" download_and_verify; systemctl restart friday-connector ;;
-  revoke)
-    need_root
-    rm -f /etc/friday-connector/credential
-    systemctl restart friday-connector || true
-    echo "local credential removed; also revoke the server in the app."
-    ;;
+  install) do_install ;;
+  upgrade) do_upgrade ;;
   uninstall)
-    need_root
-    systemctl disable --now friday-connector || true
-    rm -f /etc/systemd/system/friday-connector.service "$BIN" "$ENVF" /usr/local/bin/fridayone
-    rm -rf /etc/friday-connector
-    systemctl daemon-reload
-    echo "connector removed (service user kept; delete with: userdel -r $SERVICE_USER)"
-    ;;
-  *) echo "usage: install.sh [install|pair|status|upgrade|rollback <ver>|revoke|uninstall]" ;;
+    [ -x "$CLI_PATH" ] || fail "fridayone is not installed; nothing to uninstall"
+    exec "$CLI_PATH" uninstall "${@:2}" ;;
+  *) fail "usage: sudo bash install.sh [install|upgrade|uninstall]" 2 ;;
 esac
