@@ -20,7 +20,19 @@ export interface GatewayOptions {
   credential: () => string; // read lazily so rotation just works
   onMessage: (env: Envelope) => void;
   log?: (msg: string) => void;
+  /** Lifecycle hooks for observable state (state.ts). */
+  onConnecting?: (attempt: number) => void;
+  onClosed?: (code: number, reason: string) => void;
+  /**
+   * The gateway refused our identity for good (4403: credential revoked or
+   * expired, server not active). The connection stops; reconnecting would
+   * only hammer the gateway with a dead credential.
+   */
+  onFatal?: (code: number, reason: string) => void;
 }
+
+/** Close codes after which reconnecting cannot succeed (REALTIME_PROTOCOL.md). */
+export const FATAL_CLOSE_CODES = new Set([4403]);
 
 const HEARTBEAT_MS = 15_000;
 const MIN_BACKOFF_MS = 1_000;
@@ -77,9 +89,18 @@ export class GatewayConnection {
     const delay = this.backoffMs();
     if (delay > 0) {
       (this.opts.log ?? console.log)(`[gateway] reconnect in ${delay}ms (attempt ${this.attempts})`);
-      setTimeout(() => this.connect(), delay);
+      // The timer must OPEN the socket. Re-entering connect() here recomputed
+      // the backoff with the same attempt count and rescheduled forever, so
+      // a connector never came back after any disconnect.
+      setTimeout(() => this.open(), delay);
       return;
     }
+    this.open();
+  }
+
+  private open(): void {
+    if (this.stopped) return;
+    this.opts.onConnecting?.(this.attempts);
     const ws = new WebSocket(this.opts.url, { followRedirects: false });
     this.ws = ws;
 
@@ -131,8 +152,16 @@ export class GatewayConnection {
       this.opts.onMessage(env);
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code, reasonBuf) => {
       this.clearHeartbeat();
+      const reason = String(reasonBuf ?? "");
+      this.opts.onClosed?.(code, reason);
+      if (FATAL_CLOSE_CODES.has(code)) {
+        this.stopped = true;
+        (this.opts.log ?? console.log)(`[gateway] refused (${code} ${reason}): not reconnecting`);
+        this.opts.onFatal?.(code, reason);
+        return;
+      }
       this.attempts++;
       if (!this.stopped) this.connect(); // backoff applied inside connect()
     });

@@ -48,6 +48,21 @@ ${bar}
 `);
 }
 
+/**
+ * Poll the enrollment session. POST keeps the token out of URLs and access
+ * logs; GET ?token= is only for control planes that predate it.
+ */
+export function poll(controlPlaneUrl: string, token: string, legacyGet: boolean): Promise<Response> {
+  if (legacyGet) {
+    return fetch(`${controlPlaneUrl}/api/v1/enrollments/session?token=${encodeURIComponent(token)}`);
+  }
+  return fetch(`${controlPlaneUrl}/api/v1/enrollments/session/poll`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+}
+
 export async function enroll(
   controlPlaneUrl: string,
   token: string,
@@ -71,11 +86,15 @@ export async function enroll(
 
   // Step 2: poll for the claim; pick up the credential exactly once.
   const deadline = Date.now() + POLL_TIMEOUT_MS;
+  let legacyGet = false;
   while (Date.now() < deadline) {
     await sleep(POLL_INTERVAL_MS);
-    const res = await fetch(
-      `${controlPlaneUrl}/api/v1/enrollments/session?token=${encodeURIComponent(token)}`,
-    );
+    const res = await poll(controlPlaneUrl, token, legacyGet);
+    if (!legacyGet && (res.status === 404 || res.status === 405)) {
+      // Control plane predates POST polling: fall back once (token in URL, F-M2).
+      legacyGet = true;
+      continue;
+    }
     if (!res.ok) throw new Error(`enrollment poll failed (HTTP ${res.status})`);
     const body = (await res.json()) as { state: string; credential?: string };
     if (body.state === "paired" && typeof body.credential === "string") {

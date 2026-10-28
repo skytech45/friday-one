@@ -8,6 +8,8 @@
  */
 import WebSocket from "ws";
 import { ENVELOPE_BASE, makeEnvelope, isInboundAllowed, isExpired } from "./protocol.js";
+/** Close codes after which reconnecting cannot succeed (REALTIME_PROTOCOL.md). */
+export const FATAL_CLOSE_CODES = new Set([4403]);
 const HEARTBEAT_MS = 15_000;
 const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
@@ -60,9 +62,18 @@ export class GatewayConnection {
         const delay = this.backoffMs();
         if (delay > 0) {
             (this.opts.log ?? console.log)(`[gateway] reconnect in ${delay}ms (attempt ${this.attempts})`);
-            setTimeout(() => this.connect(), delay);
+            // The timer must OPEN the socket. Re-entering connect() here recomputed
+            // the backoff with the same attempt count and rescheduled forever, so
+            // a connector never came back after any disconnect.
+            setTimeout(() => this.open(), delay);
             return;
         }
+        this.open();
+    }
+    open() {
+        if (this.stopped)
+            return;
+        this.opts.onConnecting?.(this.attempts);
         const ws = new WebSocket(this.opts.url, { followRedirects: false });
         this.ws = ws;
         ws.on("open", () => {
@@ -105,8 +116,16 @@ export class GatewayConnection {
             }
             this.opts.onMessage(env);
         });
-        ws.on("close", () => {
+        ws.on("close", (code, reasonBuf) => {
             this.clearHeartbeat();
+            const reason = String(reasonBuf ?? "");
+            this.opts.onClosed?.(code, reason);
+            if (FATAL_CLOSE_CODES.has(code)) {
+                this.stopped = true;
+                (this.opts.log ?? console.log)(`[gateway] refused (${code} ${reason}): not reconnecting`);
+                this.opts.onFatal?.(code, reason);
+                return;
+            }
             this.attempts++;
             if (!this.stopped)
                 this.connect(); // backoff applied inside connect()

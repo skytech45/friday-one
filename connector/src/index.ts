@@ -15,16 +15,25 @@ import { enroll } from "./enroll.js";
 import { decide } from "./policy.js";
 import { AcpAgent } from "./acp.js";
 import {
+  agentSpecs,
   availableAgentSpecs,
+  binOf,
+  commandAvailable,
   probeVersion,
   reportedAgents,
   resolveAgent,
   type AgentSpec,
 } from "./agents.js";
 import { GatewayConnection } from "./gateway.js";
+import { DEFAULT_STATE_FILE, StateFile } from "./state.js";
 import { createHash, randomBytes } from "node:crypto";
 
-const CONNECTOR_VERSION = "0.1.0";
+/** Release builds inject the tag (build-release.sh → esbuild --define). */
+declare const __FRIDAY_VERSION__: string | undefined;
+const CONNECTOR_VERSION = typeof __FRIDAY_VERSION__ === "string" ? __FRIDAY_VERSION__ : "0.1.0-dev";
+
+/** Set once `run` starts; capability reports also land here. */
+let stateFile: StateFile | null = null;
 
 /** Identity holder: filled from the gateway's auth.resume.ok (mutable ref). */
 const ids = { serverId: "00000000-0000-0000-0000-000000000000", connectorId: "" };
@@ -88,6 +97,7 @@ async function maybeRotate(cfg: ReturnType<typeof loadConfig>): Promise<void> {
 function reportCapabilities(cfg: ReturnType<typeof loadConfig>): void {
   if (!conn) return;
   const specs = availableAgentSpecs();
+  stateFile?.update({ agents: specs.map((s) => ({ adapter: s.adapter, version: agentVersions.get(s.adapter) ?? null })) });
   conn.emit("connector.hello", {
     connector_version: CONNECTOR_VERSION,
     agents: reportedAgents(specs, agentVersions),
@@ -229,33 +239,81 @@ async function handleDispatch(
   }
 }
 
+/** Exit status for "cannot run as configured" (sysexits EX_CONFIG). The
+ *  systemd unit sets RestartPreventExitStatus=78 so a revoked or unpaired
+ *  connector stops instead of restart-looping. */
+const EXIT_NOT_AUTHORIZED = 78;
+
 async function main(): Promise<void> {
-  const cfg = loadConfig();
   const command = process.argv[2] ?? "run";
 
+  // Diagnostics need no configuration (used by `fridayone doctor`).
+  if (command === "version" || command === "--version") {
+    console.log(CONNECTOR_VERSION);
+    return;
+  }
+  if (command === "agents") {
+    const report = agentSpecs().map((s) => {
+      const available = commandAvailable(s.cmd);
+      return { adapter: s.adapter, command: binOf(s.cmd), available, version: available ? probeVersion(s.cmd) : null };
+    });
+    console.log(process.argv.includes("--json") ? JSON.stringify(report) : report
+      .map((a) => `${a.adapter.padEnd(10)} ${a.available ? `found (${a.version ?? "version unknown"})` : `not found: ${a.command}`}`)
+      .join("\n"));
+    return;
+  }
+
+  const cfg = loadConfig();
+
   if (command === "enroll") {
-    // Plan v2: token comes from the app's version-pinned install command.
+    // The token comes from the environment, never argv: arguments are
+    // visible to every local user in `ps`. argv is accepted only for old
+    // installers and warns.
     const token = process.env.FRIDAY_ENROLLMENT_TOKEN ?? process.argv[3] ?? "";
+    if (!process.env.FRIDAY_ENROLLMENT_TOKEN && process.argv[3]) {
+      console.warn("warning: passing the enrollment token as an argument exposes it to other local users; use FRIDAY_ENROLLMENT_TOKEN");
+    }
     if (!token) throw new Error("FRIDAY_ENROLLMENT_TOKEN required for `enroll` (from the app's install command)");
     await enroll(cfg.controlPlaneUrl, token, cfg.credentialFile);
     return;
   }
 
   if (command === "run") {
-    const credential = readCredential(cfg.credentialFile);
+    const state = new StateFile(process.env.FRIDAY_STATE_FILE ?? DEFAULT_STATE_FILE, CONNECTOR_VERSION, cfg.gatewayUrl);
+    try {
+      readCredential(cfg.credentialFile);
+    } catch (e) {
+      state.update({ state: "unpaired", lastError: (e as Error).message });
+      console.error(`not paired: ${(e as Error).message} — run: sudo fridayone setup`);
+      process.exit(EXIT_NOT_AUTHORIZED);
+    }
     console.log(`connector ${CONNECTOR_VERSION} starting`);
+    stateFile = state;
+    state.flush();
 
     if (cfg.gatewayUrl) {
       conn = new GatewayConnection({
         url: cfg.gatewayUrl,
         ids,
         credential: () => readCredential(cfg.credentialFile),
+        onConnecting: (attempt) => state.update({ state: "connecting", reconnects: attempt }),
+        onClosed: (code, reason) => state.update({ state: "disconnected", lastCloseCode: code, lastError: reason || null }),
+        onFatal: (code, reason) => {
+          state.update({ state: "revoked", lastCloseCode: code, lastError: reason || "refused by gateway" });
+          console.error(`gateway refused this connector (${code} ${reason}). Re-pair: sudo fridayone setup`);
+          for (const a of agents.values()) a.shutdown();
+          process.exit(EXIT_NOT_AUTHORIZED);
+        },
         onMessage: (env) => {
           if (env.event_type === "auth.resume.ok") {
             const p = env.payload as { server_id?: string; connector_id?: string };
             if (typeof p.server_id === "string") ids.serverId = p.server_id;
             if (typeof p.connector_id === "string") ids.connectorId = p.connector_id;
             console.log(`gateway accepted us: server=${ids.serverId} connector=${ids.connectorId}`);
+            state.update({
+              state: "connected", serverId: ids.serverId, connectorId: ids.connectorId,
+              lastConnectedAt: new Date().toISOString(), lastError: null, lastCloseCode: null,
+            });
             // Probe versions off the auth path, then publish capabilities so
             // the app can populate its agent/project pickers.
             setTimeout(() => {
@@ -294,6 +352,7 @@ async function main(): Promise<void> {
       conn.start();
     } else {
       console.warn("[config] FRIDAY_GATEWAY_URL not set: running disconnected");
+      state.update({ state: "disconnected", lastError: "FRIDAY_GATEWAY_URL not set" });
     }
 
     // Policy is REMOTE (per-dispatch, fail closed); the same sync response
@@ -303,7 +362,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  throw new Error(`unknown command: ${command} (use: enroll | run)`);
+  throw new Error(`unknown command: ${command} (use: run | enroll | version | agents [--json])`);
 }
 
 process.on("SIGTERM", () => {
