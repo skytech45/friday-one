@@ -38,7 +38,7 @@ reconnect). CI run [40505895763](https://github.com/skytech45/friday-one/actions
 | Test | Status | Evidence / blocker |
 |---|---|---|
 | A Authentication | PARTIAL | API + gateway token checks VERIFIED on emulator; device sign-in BLOCKED (Firebase console steps) |
-| B Pairing | PARTIAL | API state machine VERIFIED (emulator); VPS side via `fridayone setup`: harness VERIFIED (stubbed), real systemd pending CI; app scan/claim on a device not run |
+| B Pairing | PARTIAL | API state machine VERIFIED (emulator); VPS side via `fridayone setup` VERIFIED on real systemd (CI, fake backend: pairing, token reuse rejected); app scan/claim on a device not run |
 | C Gateway | PARTIAL | reconnect after a gateway drop and service restart VERIFIED (CI, fake gateway); live gateway not tested |
 | D Agent operation | BLOCKED | no VPS with OpenCode/Hermes here; policy gate verified (`dispatch.test.ts`, migration CI) |
 | E Revocation | PARTIAL | API A-4, gateway G-3 VERIFIED (emulator); connector + systemd behaviour VERIFIED (CI); live end to end not run |

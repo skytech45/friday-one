@@ -16,7 +16,7 @@ merge both when that branch lands.
 | C-4 | Runs unprivileged, no inbound port, survives restart, no restart loop on revocation | VERIFIED (CI, real systemd) |
 | C-5 | Download integrity, fail closed | VERIFIED (CI tamper test); signatures MISSING |
 | C-6 | Upgrade preserves config; uninstall safe | VERIFIED (CI) |
-| C-7 | No secrets in logs, argv, URLs or shell history | VERIFIED (harness) for the token; journal check on CI |
+| C-7 | No secrets in logs, argv, URLs or shell history | VERIFIED: harness (token never in config/argv/output) + CI (no token/credential in the journal, no token in URLs) |
 | C-8 | Real release published with these fixes | BLOCKED: needs authorization to push, merge and release |
 
 ## Backend and gateway (legacy stack, live)
