@@ -142,10 +142,16 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Download ONLY the release artifacts by name. Without a name the action
+      # fetches every artifact in the run, including CI's gitleaks report.
       - uses: actions/download-artifact@v4
         with:
+          name: connector
           path: assets
-          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: assets
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -181,7 +187,13 @@ jobs:
             cat assets/*.sha256
             echo '```'
           } > notes.md
-          gh release create "$TAG" assets/* \
+          # Exactly the expected files, nothing else: fail if the set differs.
+          expected="FRIDAY-One-${TAG}-release.apk FRIDAY-One-${TAG}-release.apk.sha256 friday-connector-${TAG}-linux-arm64.js friday-connector-${TAG}-linux-arm64.js.sha256 friday-connector-${TAG}-linux-x64.js friday-connector-${TAG}-linux-x64.js.sha256 install.sh install.sh.sha256"
+          actual="$(cd assets && find . -mindepth 1 -printf '%P\n' | sort | tr '\n' ' ' | sed 's/ $//')"
+          want="$(printf '%s\n' $expected | sort | tr '\n' ' ' | sed 's/ $//')"
+          [ "$actual" = "$want" ] || { echo "::error::unexpected release assets: $actual"; exit 1; }
+          files=(); for f in $expected; do files+=("assets/$f"); done
+          gh release create "$TAG" "${files[@]}" \
             --repo "$REPO" \
             --verify-tag \
             --title "FRIDAY One ${TAG}" \
