@@ -1,7 +1,10 @@
 /**
  * Connector-side enrollment session endpoints (plan v2 §7).
- * POST /api/v1/enrollments/session  { token }  -> display code (once)
- * GET  /api/v1/enrollments/session?token=...   -> state + credential pickup
+ * POST /api/v1/enrollments/session       { token }  -> display code (once)
+ * POST /api/v1/enrollments/session/poll  { token }  -> state + credential pickup
+ *      (vercel.json rewrites it here with ?mode=poll; no extra function)
+ * GET  /api/v1/enrollments/session?token=...         -> same as poll, for
+ *      connectors <= v0.9.0 only: it puts the token in URLs and logs (F-M2)
  *
  * The enrollment token authorizes PAIRING ONLY — never shell access.
  */
@@ -10,22 +13,36 @@ import { openEnrollmentSession, pickupCredential } from "../../../lib/enrollment
 import { clientIp, consumeLimit, limitResponse } from "../../../lib/ratelimit.js";
 import { json, fail } from "../../../lib/util.js";
 
+async function pollResponse(res: VercelResponse, token: string): Promise<void> {
+  if (!token) return fail(res, 400, "invalid_request");
+  const pickup = await pickupCredential(token);
+  if (pickup) {
+    return json(res, 200, {
+      state: "paired",
+      server_id: pickup.serverId,
+      enrollment_id: pickup.enrollmentId,
+      credential: pickup.credential,
+    });
+  }
+  // Not yet claimed (or already picked up): state-only, no secrets.
+  return json(res, 200, { state: "pending" });
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const ip = clientIp(req);
+  const isPoll = req.method === "GET" || (req.method === "POST" && req.query?.mode === "poll");
   // Session-open is the expensive operation; polls are cheap but numerous.
-  if (req.method === "POST") {
-    const limit = await consumeLimit("sessionOpen", ip);
-    if (!limit.ok) return limitResponse(res, limit);
-  } else if (req.method === "GET") {
-    const limit = await consumeLimit("sessionPoll", ip);
+  if (req.method === "POST" || req.method === "GET") {
+    const limit = await consumeLimit(isPoll ? "sessionPoll" : "sessionOpen", ip);
     if (!limit.ok) return limitResponse(res, limit);
   }
-  const token = typeof req.body?.token === "string" ? req.body.token
-    : typeof req.query?.token === "string" ? String(req.query.token) : "";
+  const bodyToken = typeof req.body?.token === "string" ? req.body.token : "";
+
+  if (req.method === "POST" && isPoll) return pollResponse(res, bodyToken);
 
   if (req.method === "POST") {
-    if (!token) return fail(res, 400, "invalid_request");
-    const sess = await openEnrollmentSession(token);
+    if (!bodyToken) return fail(res, 400, "invalid_request");
+    const sess = await openEnrollmentSession(bodyToken);
     if (!sess) return fail(res, 403, "invalid_or_expired_token");
     return json(res, 200, {
       enrollment_id: sess.enrollmentId,
@@ -36,18 +53,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   }
 
   if (req.method === "GET") {
-    if (!token) return fail(res, 400, "invalid_request");
-    const pickup = await pickupCredential(token);
-    if (pickup) {
-      return json(res, 200, {
-        state: "paired",
-        server_id: pickup.serverId,
-        enrollment_id: pickup.enrollmentId,
-        credential: pickup.credential,
-      });
-    }
-    // Not yet claimed (or already picked up): state-only, no secrets.
-    return json(res, 200, { state: "pending" });
+    return pollResponse(res, typeof req.query?.token === "string" ? String(req.query.token) : "");
   }
 
   return fail(res, 405, "method_not_allowed");
