@@ -103,7 +103,7 @@ has "$env_now" "FRIDAY_GATEWAY_URL=ws://127.0.0.1:$WS_PORT" && ok "gateway URL t
 has "$env_now" "FRIDAY_ALLOWED_ROOTS=/srv/app" && ok "project root saved" || nope "roots" "$env_now"
 grep -q "ReadWritePaths= /srv/app" "$R/etc/systemd/system/friday-connector.service.d/10-project-roots.conf" && ok "systemd drop-in grants only the project root" || nope "drop-in" "$(cat "$R/etc/systemd/system/friday-connector.service.d/10-project-roots.conf" 2>&1)"
 if grep -rqF "$TOKEN" "$R/etc" "$LOG" 2>/dev/null || has "$out" "$TOKEN"; then nope "token leaked to config, argv log or output"; else ok "enrollment token never written, echoed or passed in argv"; fi
-ls "$R/etc/friday-connector/" | grep -q "connector.env.bak." && ok "previous config backed up before rewrite" || nope "config backup"
+compgen -G "$R/etc/friday-connector/connector.env.bak.*" >/dev/null && ok "previous config backed up before rewrite" || nope "config backup"
 
 out="$(run status)"; rc=$?
 [ "$rc" -eq 0 ] && has "$out" "connected as server" && ok "status: connected, exit 0" || nope "status connected" "$out"
