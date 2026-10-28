@@ -18,6 +18,10 @@ on:
       tag:
         description: Existing tag to release (e.g. v0.9.0)
         required: true
+      notice:
+        description: Optional notice shown at the top of the release notes (e.g. a signing-key change)
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -118,6 +122,8 @@ jobs:
             echo "::error::APK is debug-signed; refusing to publish"; exit 1
           fi
           mkdir -p dist-apk
+          # Public certificate digest, quoted in the release notes so users can verify the APK.
+          grep -m1 "certificate SHA-256 digest" certs.txt | sed 's/.*: //' > dist-apk/signing-cert-sha256.txt
           cp "$apk" "dist-apk/FRIDAY-One-${TAG}-release.apk"
           (cd dist-apk && sha256sum "FRIDAY-One-${TAG}-release.apk" > "FRIDAY-One-${TAG}-release.apk.sha256")
       - name: Remove keystore
@@ -144,10 +150,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          NOTICE: ${{ github.event.inputs.notice }}
         run: |
           set -euo pipefail
+          cert="$(cat assets/signing-cert-sha256.txt)"
+          rm assets/signing-cert-sha256.txt # quoted in the notes, not an asset
           ls -la assets
           {
+            if [ -n "$NOTICE" ]; then
+              echo "> [!IMPORTANT]"
+              echo "> ${NOTICE}"
+              echo
+            fi
             echo "## Install or upgrade the connector"
             echo
             echo '```bash'
@@ -158,7 +172,8 @@ jobs:
             echo
             echo "## Android"
             echo
-            echo "\`FRIDAY-One-${TAG}-release.apk\`, signed with the FRIDAY One release key (upgrades over earlier releases)."
+            echo "\`FRIDAY-One-${TAG}-release.apk\`, signed with the FRIDAY One release key."
+            echo "Signing certificate SHA-256: \`${cert}\`"
             echo
             echo "## Checksums"
             echo
